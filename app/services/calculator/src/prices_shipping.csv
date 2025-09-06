@@ -1,0 +1,22 @@
+terminal,destination,car_price,moto_price
+Houston,Klaipeda,700,700
+Houston,Rotterdam,600,350
+Seattle,Bremerhaven,1500,500
+Houston,Bremerhaven,600,350
+Los Angeles,Bremerhaven,1000,450
+Miami,Bremerhaven,600,350
+New York,Bremerhaven,450,350
+Savannah,Bremerhaven,450,350
+Los Angeles,Klaipeda,1100,450
+Miami,Klaipeda,650,350
+New Jersey,Klaipeda,550,350
+New York,Klaipeda,550,350
+Savannah,Klaipeda,550,350
+Seattle,Klaipeda,1500,500
+Chicago,Klaipeda,775,350
+Chicago,Rotterdam,550,350
+Los Angeles,Rotterdam,1000,450
+Miami,Rotterdam,600,350
+New York,Rotterdam,450,350
+Savannah,Rotterdam,450,350
+Seattle,Rotterdam,1500,500
