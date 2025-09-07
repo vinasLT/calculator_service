@@ -15,13 +15,12 @@ from app.database.crud.location import LocationService
 from app.database.crud.shipping_price import ShippingPriceService
 from app.database.crud.vehicle_type import VehicleTypeService
 from app.database.db.session import AsyncSessionLocal
-from app.database.models import DeliveryPrice
-from currency_converter import CurrencyConverter
 from app.enums.auction import AuctionEnum
 from app.enums.fee_type import FeeTypeEnum
 from app.enums.vehicle_type import VehicleTypeEnum
 from app.schemas.calculator import CalculatorDataIn
-from app.services.calculator.types import City, DefaultCalculator, AdditionalFeesOut, EUCalculator, VATs, CalculatorOut
+from app.services.calculator.types import City, DefaultCalculator, AdditionalFeesOut, EUCalculator, VATs, CalculatorOut, \
+    Calculator, SpecialFee
 
 
 class CalculatorService:
@@ -54,11 +53,12 @@ class CalculatorService:
         fee_service = FeeService(self.db)
         additional_fee_service = AdditionalFeeService(self.db)
 
-
         fees = await additional_special_fee_service.get_additional_special_fee(self.data.auction)
+        print(fees)
 
         all_fees_summ = sum([fee.amount for fee in fees])
-
+        special_fees_obj = [SpecialFee(name=fee.name, price=fee.amount) for fee in fees]
+        print(all_fees_summ, 'all fees summ')
 
         if self.data.fee_type:
             fee_type = await fee_type_service.get_by_fee_auction(self.data.auction, self.data.fee_type)
@@ -67,14 +67,10 @@ class CalculatorService:
             all_fee_types = await fee_type_service.get_all()
             print(all_fee_types)
 
-
-
         internet_fee = 0
         live_fee = 0
 
-
         auction_fee_obj = await fee_service.get_fee_in_car_price(fee_type, self.data.price)
-
 
         if auction_fee_obj.car_price_fee < 1:
             auction_fee = self.data.price * auction_fee_obj.car_price_fee
@@ -89,13 +85,12 @@ class CalculatorService:
             live_fee = live_fee.live_bid_fee
 
         addit_fees = all_fees_summ + int(auction_fee) + internet_fee + live_fee
+        special_fees_obj.extend([SpecialFee(name='Auction Fee', price=auction_fee),
+                                 SpecialFee(name='Internet Fee', price=internet_fee),
+                                 SpecialFee(name='Live Fee', price=live_fee)])
 
-        # invoice_fees = {
-        #     'auction_fee': auction_fee,
-        #     'internet_fee': internet_fee,
-        #     'live_fee': live_fee
-        # }
-        return AdditionalFeesOut(summ=addit_fees, auction_fee=auction_fee, live_fee=live_fee, internet_fee=int(internet_fee))
+        return AdditionalFeesOut(summ=addit_fees, fees=special_fees_obj, auction_fee=auction_fee,
+                                 internet_fee=internet_fee, live_fee=live_fee)
 
     @staticmethod
     def sync_terminals( delivery_cities: list[City], shipping_terminals: list[City]):
@@ -109,7 +104,56 @@ class CalculatorService:
 
         return filtered_delivery, filtered_shipping
 
-    async def calculate(self):
+    async def calculate_in_euro(self, calculator: CalculatorOut)-> CalculatorOut:
+        exchange_rate_service = ExchangeRateService(self.db)
+        rate_obj = await exchange_rate_service.get_last_rate()
+        rate = rate_obj.rate
+
+        def usd_to_euro(usd: int) -> int:
+            return round(usd * rate)
+
+        def city_to_euro(cities: list[City]) -> list[City]:
+            return [City(name=city.name, price=usd_to_euro(city.price))
+             for city in cities]
+
+        def additional_fee_to_euro(additional_fees: AdditionalFeesOut) -> AdditionalFeesOut:
+            special_fees = [
+                SpecialFee(name=special_fee.name, price=usd_to_euro(special_fee.price))
+                for special_fee in additional_fees.fees
+            ]
+            return AdditionalFeesOut(summ=additional_fees.summ, fees=special_fees,
+                                     auction_fee=additional_fees.auction_fee, internet_fee=additional_fees.internet_fee,
+                                     live_fee=additional_fees.live_fee)
+
+
+        default_calculator = DefaultCalculator(
+            broker_fee=usd_to_euro(calculator.calculator.broker_fee),
+            transportation_price=city_to_euro(calculator.calculator.transportation_price),
+            ocean_ship=city_to_euro(calculator.calculator.ocean_ship),
+            additional=additional_fee_to_euro(calculator.calculator.additional),
+            totals=city_to_euro(calculator.calculator.totals),
+            auction_fee=usd_to_euro(calculator.calculator.auction_fee),
+            live_fee=usd_to_euro(calculator.calculator.live_fee),
+            internet_fee=usd_to_euro(calculator.calculator.internet_fee)
+        )
+        eu_calculator = EUCalculator(
+            broker_fee=usd_to_euro(calculator.eu_calculator.broker_fee),
+            transportation_price=city_to_euro(calculator.eu_calculator.transportation_price),
+            ocean_ship=city_to_euro(calculator.eu_calculator.ocean_ship),
+            additional=additional_fee_to_euro(calculator.eu_calculator.additional),
+            totals=city_to_euro(calculator.eu_calculator.totals),
+            vats=VATs(vats=city_to_euro(calculator.eu_calculator.vats.vats),
+                      eu_vats=city_to_euro(calculator.eu_calculator.vats.eu_vats)),
+
+        )
+
+        return CalculatorOut(
+            calculator=default_calculator,
+            eu_calculator=eu_calculator
+        )
+
+
+    async def calculate(self) -> Calculator:
         vehicle_type_service = VehicleTypeService(self.db)
         location_service = LocationService(self.db)
         destination_service = DestinationService(self.db)
@@ -151,7 +195,7 @@ class CalculatorService:
         rate = await exchange_rate_service.get_last_rate()
         rate = rate.rate
 
-        custom_agency = round(350 / rate, 1)
+        # custom_agency = round(350 / rate, 1)
 
         # Обычный калькулятор (в долларах)
         total_default: list[City] = []
@@ -169,7 +213,7 @@ class CalculatorService:
             broker_fee=self.BROKER_FEE,
             transportation_price=delivery_cities,
             ocean_ship=shipping_terminals,
-            additional=additional_fees.summ,
+            additional=additional_fees,
             auction_fee=additional_fees.auction_fee,
             live_fee=additional_fees.live_fee,
             internet_fee=additional_fees.internet_fee,
@@ -203,8 +247,8 @@ class CalculatorService:
                 self.data.price +
                 eu_vat +
                 vat +
-                shipping.price +
-                custom_agency
+                shipping.price
+                # custom_agency
             )
             total_eu.append(City(name=delivery.name, price=total_price_eu))
 
@@ -217,244 +261,57 @@ class CalculatorService:
             broker_fee=self.BROKER_FEE,
             transportation_price=delivery_cities,
             ocean_ship=shipping_terminals,
-            additional=additional_fees.summ,
+            additional=additional_fees,
             vats=vats_obj,
-            custom_agency=int(custom_agency),
+            custom_agency=int(0),
             totals=total_eu
         )
 
-        # Пересчет в евро
-        delivery_cities_euro = [City(name=city.name, price=round(city.price / rate)) for city in delivery_cities]
-        shipping_terminals_euro = [City(name=terminal.name, price=round(terminal.price / rate)) for terminal in
-                                   shipping_terminals]
-
-        broker_fee_euro = round(self.BROKER_FEE / rate, 1)
-        additional_fees_euro = round(additional_fees.summ / rate, 1)
-        auction_fee_euro = round(additional_fees.auction_fee / rate, 1)
-        live_fee_euro = round(additional_fees.live_fee / rate, 1)
-        internet_fee_euro = round(additional_fees.internet_fee / rate, 1)
-        price_euro = round(self.data.price / rate, 1)
-
-        # Обычный калькулятор в евро
-        total_default_euro: list[City] = []
-        for delivery_euro, shipping_euro in zip(delivery_cities_euro, shipping_terminals_euro):
-            total_price_euro = (
-                    delivery_euro.price +
-                    shipping_euro.price +
-                    additional_fees_euro +
-                    broker_fee_euro +
-                    price_euro
-            )
-            total_default_euro.append(City(name=delivery_euro.name, price=round(total_price_euro)))
-
-        calculator_in_euro = DefaultCalculator(
-            broker_fee=round(broker_fee_euro),
-            transportation_price=delivery_cities_euro,
-            ocean_ship=shipping_terminals_euro,
-            additional=round(additional_fees_euro),
-            auction_fee=round(auction_fee_euro),
-            live_fee=round(live_fee_euro),
-            internet_fee=round(internet_fee_euro),
-            totals=total_default_euro
-        )
-
-        # ЕС калькулятор в евро
-        eu_vats_list_euro: list[City] = []
-        vats_list_euro: list[City] = []
-        total_eu_euro: list[City] = []
-
-        for delivery_euro, shipping_euro in zip(delivery_cities_euro, shipping_terminals_euro):
-            base_sum_euro = (
-                    broker_fee_euro +
-                    shipping_euro.price +
-                    delivery_euro.price +
-                    additional_fees_euro +
-                    price_euro
-            )
-
-            eu_vat_euro = round(base_sum_euro * 0.1, 1)
-            eu_vats_list_euro.append(City(name=delivery_euro.name, price=round(eu_vat_euro)))
-
-            vat_euro = round((eu_vat_euro + base_sum_euro) * 0.21, 1)
-            vats_list_euro.append(City(name=delivery_euro.name, price=round(vat_euro)))
-
-            total_price_eu_euro = round(
-                delivery_euro.price +
-                broker_fee_euro +
-                additional_fees_euro +
-                price_euro +
-                eu_vat_euro +
-                vat_euro +
-                shipping_euro.price +
-                350  # custom_agency уже в евро
-                , 1)
-            total_eu_euro.append(City(name=delivery_euro.name, price=round(total_price_eu_euro)))
-
-        vats_obj_euro = VATs(
-            eu_vats=eu_vats_list_euro,
-            vats=vats_list_euro
-        )
-
-        eu_calculator_in_euro = EUCalculator(
-            broker_fee=round(broker_fee_euro),
-            transportation_price=delivery_cities_euro,
-            ocean_ship=shipping_terminals_euro,
-            additional=round(additional_fees_euro),
-            vats=vats_obj_euro,
-            custom_agency=350,  # custom_agency уже в евро
-            totals=total_eu_euro
-        )
-
-        return CalculatorOut(
+        calculator_out = CalculatorOut(
             calculator=calculator,
             eu_calculator=eu_calculator,
-            calculator_in_euro=calculator_in_euro,
-            eu_calculator_in_euro=eu_calculator_in_euro
+        )
+
+        return Calculator(
+            calculator_in_dollars=calculator_out,
+            calculator_in_currency=await self.calculate_in_euro(calculator_out)
         )
 
 
 if __name__ == "__main__":
     async def main():
         db = AsyncSessionLocal()
-        time_start = datetime.now(UTC)
-        calculator = CalculatorService(db, 1000, AuctionEnum.COPART, None, "TX - Dallas", VehicleTypeEnum.CAR)
+
+        location = "Abilene"
+        user_price = 1000
+        auction = AuctionEnum.IAAI
+        vehicle_type = VehicleTypeEnum.CAR
+
+        calculator = CalculatorService(db, user_price,auction, None, location, vehicle_type)
         data = await calculator.calculate()
-        calc = data.calculator
-        eu_calc = data.eu_calculator
-        calc_euro = data.calculator_in_euro
-        eu_calc_euro = data.eu_calculator_in_euro
 
-        def format_city_list(cities, title="", currency="$"):
-            """Форматирует список городов с ценами"""
-            if not cities:
-                return f"  {title}: Нет данных"
+        def print_data(calculator):
+            print(f'INPUTS:\n'
+                  f'vehicle price: {user_price}\n'
+                  f'auction: {auction.value}\n'
+                  f'vehicle type: {vehicle_type.value}\n'
+                  f'location: {location}\n'
+                  f'\n\n'
+                  f'CALCULATOR:\n'
+                  f'VEHICLE_PRICE: {user_price}\n'
+                  f'+\n'
+                  f'BROKER_FEE: ${calculator.broker_fee}\n'
+                  f'+\n'
+                  f'TRANSPORTATION PRICE (from auction to terminal: {calculator.transportation_price[0].name}): ${calculator.transportation_price[0].price}\n'
+                  f'+\n'
+                  f'OCEAN SHIP (from terminal in usa to Klaipeda): ${calculator.ocean_ship[0].price}\n'
+                  f'+\n'
+                  f'ADDITIONAL FEES (include {', '.join([f'{special_fee.name}: {special_fee.price}' for special_fee in calculator.additional.fees])}): ${calculator.additional.summ}\n'
+                  f'=\n'
+                  f'TOTAL: ${calculator.totals[0].price}\n')
 
-            result = f"  {title}:\n" if title else ""
-            for city in cities:
-                if currency == "€":
-                    result += f"    • {city.name}: {city.price:,.1f} €\n"
-                else:
-                    result += f"    • {city.name}: {city.price:,} $\n"
-            return result.rstrip()
+        print_data(data.calculator_in_currency.eu_calculator)
 
-        def format_price(price, label="", currency="$"):
-            """Форматирует цену с разделителями тысяч"""
-            if currency == "€":
-                return f"  {label}: {price:,.1f} €"
-            else:
-                return f"  {label}: {price:,} $"
-
-        print("=" * 80)
-        print("🧮 КАЛЬКУЛЯТОР РАСЧЕТОВ")
-        print("=" * 80)
-
-        # Основной калькулятор (USD)
-        print("\n📊 ОСНОВНОЙ КАЛЬКУЛЯТОР (USD)")
-        print("-" * 50)
-        print(format_price(calc.broker_fee, "Комиссия брокера"))
-        print(format_price(calc.auction_fee, "Аукционный сбор"))
-        print(format_price(calc.live_fee, "Live аукцион"))
-        print(format_price(calc.internet_fee, "Интернет аукцион"))
-        print(format_price(calc.additional, "Дополнительные расходы"))
-
-        print(f"\n🚚 Стоимость доставки по городам:")
-        print(format_city_list(calc.transportation_price))
-
-        print(f"\n🚢 Морская доставка:")
-        print(format_city_list(calc.ocean_ship))
-
-        print(f"\n💰 Итоговые суммы по городам:")
-        print(format_city_list(calc.totals))
-
-        # EU калькулятор (USD)
-        print("\n" + "=" * 80)
-        print("🇪🇺 ЕВРОПЕЙСКИЙ КАЛЬКУЛЯТОР (USD)")
-        print("-" * 50)
-        print(format_price(eu_calc.broker_fee, "Комиссия брокера"))
-        print(format_price(eu_calc.custom_agency, "Таможенное агентство"))
-        print(format_price(eu_calc.additional, "Дополнительные расходы"))
-
-        print(f"\n🚚 Стоимость доставки по городам:")
-        print(format_city_list(eu_calc.transportation_price))
-
-        print(f"\n🚢 Морская доставка:")
-        print(format_city_list(eu_calc.ocean_ship))
-
-        print(f"\n📋 НДС:")
-        print(format_city_list(eu_calc.vats.vats, "Обычный НДС"))
-        print(format_city_list(eu_calc.vats.eu_vats, "Европейский НДС"))
-
-        print(f"\n💰 Итоговые суммы по городам:")
-        print(format_city_list(eu_calc.totals))
-
-        # Основной калькулятор (EUR)
-        print("\n" + "=" * 80)
-        print("📊 ОСНОВНОЙ КАЛЬКУЛЯТОР (EUR)")
-        print("-" * 50)
-        print(format_price(calc_euro.broker_fee, "Комиссия брокера", "€"))
-        print(format_price(calc_euro.auction_fee, "Аукционный сбор", "€"))
-        print(format_price(calc_euro.live_fee, "Live аукцион", "€"))
-        print(format_price(calc_euro.internet_fee, "Интернет аукцион", "€"))
-        print(format_price(calc_euro.additional, "Дополнительные расходы", "€"))
-
-        print(f"\n🚚 Стоимость доставки по городам:")
-        print(format_city_list(calc_euro.transportation_price, currency="€"))
-
-        print(f"\n🚢 Морская доставка:")
-        print(format_city_list(calc_euro.ocean_ship, currency="€"))
-
-        print(f"\n💰 Итоговые суммы по городам:")
-        print(format_city_list(calc_euro.totals, currency="€"))
-
-        # EU калькулятор (EUR)
-        print("\n" + "=" * 80)
-        print("🇪🇺 ЕВРОПЕЙСКИЙ КАЛЬКУЛЯТОР (EUR)")
-        print("-" * 50)
-        print(format_price(eu_calc_euro.broker_fee, "Комиссия брокера", "€"))
-        print(format_price(eu_calc_euro.custom_agency, "Таможенное агентство", "€"))
-        print(format_price(eu_calc_euro.additional, "Дополнительные расходы", "€"))
-
-        print(f"\n🚚 Стоимость доставки по городам:")
-        print(format_city_list(eu_calc_euro.transportation_price, currency="€"))
-
-        print(f"\n🚢 Морская доставка:")
-        print(format_city_list(eu_calc_euro.ocean_ship, currency="€"))
-
-        print(f"\n📋 НДС:")
-        print(format_city_list(eu_calc_euro.vats.vats, "Обычный НДС", "€"))
-        print(format_city_list(eu_calc_euro.vats.eu_vats, "Европейский НДС", "€"))
-
-        print(f"\n💰 Итоговые суммы по городам:")
-        print(format_city_list(eu_calc_euro.totals, currency="€"))
-
-        print("\n" + "=" * 80)
-
-        # Краткая сводка
-        total_basic_usd = sum(city.price for city in calc.totals) if calc.totals else 0
-        total_eu_usd = sum(city.price for city in eu_calc.totals) if eu_calc.totals else 0
-        total_basic_eur = sum(city.price for city in calc_euro.totals) if calc_euro.totals else 0
-        total_eu_eur = sum(city.price for city in eu_calc_euro.totals) if eu_calc_euro.totals else 0
-
-        print("📈 КРАТКАЯ СВОДКА")
-        print("-" * 50)
-        print("💵 В долларах:")
-        print(f"  Общая сумма (основной): {total_basic_usd:,} $")
-        print(f"  Общая сумма (EU): {total_eu_usd:,} $")
-        print(f"  Разница: {abs(total_eu_usd - total_basic_usd):,} $")
-
-        print("\n💶 В евро:")
-        print(f"  Общая сумма (основной): {total_basic_eur:,.1f} €")
-        print(f"  Общая сумма (EU): {total_eu_eur:,.1f} €")
-        print(f"  Разница: {abs(total_eu_eur - total_basic_eur):,.1f} €")
-
-        print("\n🔄 Сравнение валют:")
-        print(f"  Основной USD vs EUR: {total_basic_usd:,} $ ≈ {total_basic_eur:,.1f} €")
-        print(f"  EU USD vs EUR: {total_eu_usd:,} $ ≈ {total_eu_eur:,.1f} €")
-
-        print("=" * 80)
-
-        time_done = datetime.now(UTC)
-        print(f"Time: {time_done - time_start} seconds")
         await db.close()
 
 
