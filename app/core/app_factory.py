@@ -7,7 +7,7 @@ from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 from fastapi_problem.handler import new_exception_handler, add_exception_handler
 
-from api.api_v1.api import api_v1_router
+from app.api.api_v1.api import api_v1_router
 from app.config import settings
 from app.core.logger import logger
 
@@ -53,4 +53,3 @@ def create_app(
     setup_routers(app)
 
     return app
-app = create_app()
