@@ -1,6 +1,8 @@
 import grpc
 from fastapi import APIRouter, Depends, Path
 from fastapi.params import Param
+from fastapi_cache import default_key_builder
+from fastapi_cache.decorator import cache
 from rfc9457 import NotFoundProblem
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,7 @@ calculator_api_router = APIRouter(prefix="/calculator")
 
 @calculator_api_router.get("", response_model=Calculator, tags=["calculator"], name='get_calculator',
                            description="Get calculator by data from lot", summary='Get calculator by data (PREFERRED)')
+@cache(expire=60*15, key_builder=default_key_builder)
 async def get_calculator(data: CalculatorDataIn = Param(...), db: AsyncSession = Depends(get_async_db)):
     try:
         calculator_service = CalculatorService(
@@ -43,6 +46,7 @@ async def get_calculator(data: CalculatorDataIn = Param(...), db: AsyncSession =
     name='get_calculator',
     description="Get calculator by auction and lot id"
 )
+@cache(expire=60*15, key_builder=default_key_builder)
 async def get_calculator_by_lot(
         auction: AuctionEnum = Path(..., description='Auction'),
         lot_id: str = Path(..., description='Lot id'),
