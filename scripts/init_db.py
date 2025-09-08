@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 # Ensure project root is on sys.path so that 'app' package can be imported
 CURRENT_FILE = Path(__file__).resolve()
@@ -40,6 +40,8 @@ def _coerce_bool_series(series: pd.Series) -> pd.Series:
 
 async def seed_fees(engine: Engine):
     src_dir = CURRENT_FILE.parent / 'src'
+
+    # Map CSV paths
     tables = {
         'destination': src_dir / 'destination.csv',
         'location': src_dir / 'location.csv',
@@ -53,13 +55,51 @@ async def seed_fees(engine: Engine):
         'shipping_price': src_dir / 'shipping_price.csv',
     }
 
-    for table, path in tables.items():
+    # Deletion order: children first, then parents (to satisfy FKs)
+    delete_order = [
+        'shipping_price',
+        'delivery_price',
+        'fee',
+        'additional_special_fee',
+        'additional_fee',
+        'fee_type',
+        'vehicle_type',
+        'terminal',
+        'location',
+        'destination',
+    ]
+
+    # Insertion order: parents first, then children
+    insert_order = [
+        'destination',
+        'location',
+        'terminal',
+        'vehicle_type',
+        'fee_type',
+        'additional_fee',
+        'additional_special_fee',
+        'fee',
+        'delivery_price',
+        'shipping_price',
+    ]
+
+    # Phase 1: delete existing data without dropping tables (preserve schema & FKs)
+    with engine.begin() as conn:
+        for table in delete_order:
+            logger.info(f'Clearing table {table}')
+            try:
+                conn.execute(text(f'DELETE FROM "{table}"'))
+            except Exception as e:
+                logger.warning(f'Failed to delete from {table}: {e}')
+
+    # Phase 2: insert data
+    for table in insert_order:
+        path = tables[table]
         logger.info(f'Seeding table {table} from {path}')
         df = pd.read_csv(path)
-        # Coerce boolean-like columns where needed
         if table == 'destination' and 'is_default' in df.columns:
             df['is_default'] = _coerce_bool_series(df['is_default'])
-        df.to_sql(table, engine, if_exists='replace', index=False)
+        df.to_sql(table, engine, if_exists='append', index=False)
 
 
 if __name__ == '__main__':
