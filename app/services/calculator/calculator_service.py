@@ -4,6 +4,7 @@ from typing import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logger import logger
 from app.database.crud.additional_fee import AdditionalFeeService
 from app.database.crud.additional_special_fee import AdditionalSpecialFeeService
 from app.database.crud.delivery_price import DeliveryPriceService
@@ -19,6 +20,7 @@ from app.enums.auction import AuctionEnum
 from app.enums.fee_type import FeeTypeEnum
 from app.enums.vehicle_type import VehicleTypeEnum
 from app.schemas.calculator import CalculatorDataIn
+from app.services.calculator.exceptions import LocationNotFoundError, DestinationNotFoundError
 from app.services.calculator.types import City, DefaultCalculator, AdditionalFeesOut, EUCalculator, VATs, CalculatorOut, \
     Calculator, SpecialFee
 
@@ -33,18 +35,16 @@ class CalculatorService:
                  db: AsyncSession,
                  price: int,
                  auction: AuctionEnum,
-                 fee_type: FeeTypeEnum,
                  location: str,
                  vehicle_type: VehicleTypeEnum,
-                 vehicle_location: str | None = None,
+                 fee_type: FeeTypeEnum | None = None,
                  destination: str | None = None):
         self.data = CalculatorDataIn(price=price,
                                      auction=auction,
                                      fee_type=fee_type,
                                      location=location,
                                      vehicle_type=vehicle_type,
-                                     destination=destination,
-                                     vehicle_location=vehicle_location)
+                                     destination=destination)
         self.db = db
 
     async def additional_fees_calculator(self) -> AdditionalFeesOut:
@@ -170,13 +170,18 @@ class CalculatorService:
             destination = await destination_service.get_default()
         else:
             destination = await destination_service.get_by_name(name=self.data.destination)
+            if not destination:
+                logger.warning(f"Destination {self.data.destination} not found",
+                               extra={'destination': self.data.destination})
+                raise DestinationNotFoundError(f'Destination {self.data.destination} not found')
+
 
         additional_fees = await self.additional_fees_calculator()
 
         delivery_location_obj = await location_service.get_location(self.data.location, vehicle_type_obj)
-        print(delivery_location_obj.name)
         if not delivery_location_obj:
-            return None
+            logger.warning(f'Location {self.data.location} not found', extra={'location': self.data.location})
+            raise LocationNotFoundError(f'Location {self.data.location} not found')
 
         delivery_prices = await delivery_price_service.get_by_terminal_location_vehicle_type(
             location=delivery_location_obj,

@@ -1,3 +1,5 @@
+import re
+
 from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,31 +14,59 @@ class LocationService(BaseService[Location, LocationCreate, LocationUpdate]):
         super().__init__(Location, session)
 
     async def get_location(self, location_name: str,
-                           vehicle_type: VehicleType,
-                           city: str | None = None,
-                           state: str | None = None) -> Location | None:
-        search_conditions = [Location.name.ilike(location_name)]
+                                  vehicle_type: VehicleType,
+                                  city: str | None = None,
+                                  state: str | None = None) -> Location | None:
 
-        if city and state:
-            search_conditions.extend([
-                Location.name.ilike(f"{city} {state}"),
-                and_(Location.city.ilike(city), Location.state.ilike(state))
-            ])
+        # Очищаем название от скобок
+        clean_name = re.sub(r'\s*\([^)]*\)', '', location_name).strip()
 
-        result = await self.session.execute(
-            select(Location)
-            .join(DeliveryPrice)  # Join с таблицей delivery_price
-            .where(
-                and_(
-                    or_(*search_conditions),
-                    DeliveryPrice.vehicle_type_id == vehicle_type.id  # Фильтр по vehicle_type
+        # Пытаемся найти по разным критериям с приоритетом
+        search_patterns = [
+            location_name,  # Точное совпадение
+            clean_name,  # Без скобок
+            f"%{clean_name}%",  # Частичное совпадение
+            f"{clean_name}%",  # Начинается с
+        ]
+
+        for pattern in search_patterns:
+            result = await self.session.execute(
+                select(Location)
+                .join(DeliveryPrice)
+                .where(
+                    and_(
+                        Location.name.ilike(pattern),
+                        DeliveryPrice.vehicle_type_id == vehicle_type.id
+                    )
                 )
+                .distinct()
+                .limit(1)
             )
-            .distinct()  # Избегаем дублирования, если есть несколько DeliveryPrice для одной локации
-            .limit(1)
-        )
 
-        return result.scalar_one_or_none()
+            location = result.scalar_one_or_none()
+            if location:
+                return location
+
+        # Если не найдено и указаны город/штат, пробуем их
+        if city and state:
+            result = await self.session.execute(
+                select(Location)
+                .join(DeliveryPrice)
+                .where(
+                    and_(
+                        or_(
+                            Location.name.ilike(f"{city} {state}"),
+                            and_(Location.city.ilike(city), Location.state.ilike(state))
+                        ),
+                        DeliveryPrice.vehicle_type_id == vehicle_type.id
+                    )
+                )
+                .distinct()
+                .limit(1)
+            )
+            return result.scalar_one_or_none()
+
+        return None
 
     async def get_by_name(self, name: str) -> Location | None:
         result = await self.session.execute(

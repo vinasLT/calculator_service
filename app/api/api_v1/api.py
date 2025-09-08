@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from api.api_v1.endpoints.public.api import public_v1_router
+from app.api.api_v1.endpoints.public.api import public_v1_router
 
 api_v1_router = APIRouter(prefix="/v1")
 

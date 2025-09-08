@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from api.api_v1.endpoints.public.calculator import calculator_api_router
+from app.api.api_v1.endpoints.public.calculator import calculator_api_router
 
 public_v1_router = APIRouter(prefix='/public')
 

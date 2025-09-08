@@ -16,7 +16,10 @@ dependencies = [
     "loguru (>=0.7.3,<0.8.0)",
     "fastapi-cache2 (>=0.2.2,<0.3.0)",
     "currencyconverter (>=0.18.9,<0.19.0)",
-    "pandas (>=2.3.2,<3.0.0)"
+    "pandas (>=2.3.2,<3.0.0)",
+    "grpcio (>=1.74.0,<2.0.0)",
+    "protobuf (>=6.32.0,<7.0.0)",
+    "grpcio-health-checking (>=1.74.0,<2.0.0)"
 ]
 
 

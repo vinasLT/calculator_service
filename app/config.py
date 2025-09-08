@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     ROOT_PATH: str = ''
     ENVIRONMENT: Environment = Environment.DEVELOPMENT
 
+    # RPC
+    RPC_API_URL: str = "localhost:50051"
+
     @property
     def enable_docs(self) -> bool:
         return self.ENVIRONMENT in [Environment.DEVELOPMENT]
