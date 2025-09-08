@@ -32,7 +32,7 @@ async def seed_fees(engine: Engine):
     for table, path in tables.items():
         logger.info(f'Seeding table {table} from {path}')
         df = pd.read_csv(path)
-        df.to_sql(table, engine, if_exists='replace', index=False)
+        df.to_sql(table, engine, if_exists='append', index=False)
 
 
 if __name__ == '__main__':
