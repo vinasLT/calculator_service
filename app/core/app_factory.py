@@ -18,6 +18,9 @@ def setup_middleware_and_handlers(app: FastAPI):
 
 def setup_routers(app: FastAPI):
     app.include_router(api_v1_router)
+    @app.get("/health", tags=["Health"])
+    async def health_check():
+        return {"status": "ok"}
 
 def create_app(
         custom_redis_client: Optional[redis.Redis] = None,
