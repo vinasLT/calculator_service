@@ -49,8 +49,8 @@ async def seed_fees(engine: Engine):
         'fee': src_dir / 'fee.csv',
         'additional_fee': src_dir / 'additional_fee.csv',
         'additional_special_fee': src_dir / 'additional_special_fee.csv',
-        'delivery_price': src_dir / 'prices_delivery.csv',
-        'shipping_price': src_dir / 'prices_shipping.csv',
+        'delivery_price': src_dir / 'delivery_price.csv',
+        'shipping_price': src_dir / 'shipping_price.csv',
     }
 
     for table, path in tables.items():
