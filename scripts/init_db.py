@@ -14,6 +14,30 @@ from app.core.logger import logger
 from app.database.db.session import engine
 
 
+def _coerce_bool_series(series: pd.Series) -> pd.Series:
+    """Coerce a pandas Series with values like 0/1, "0"/"1", "true"/"false" to booleans."""
+    true_vals = {"1", "true", "t", "yes", "y"}
+    false_vals = {"0", "false", "f", "no", "n"}
+
+    def to_bool(x):
+        if isinstance(x, bool):
+            return x
+        if pd.isna(x):
+            return False
+        s = str(x).strip().lower()
+        if s in true_vals:
+            return True
+        if s in false_vals:
+            return False
+        # Fallback: non-empty/non-zero truthiness
+        try:
+            return bool(int(s))
+        except Exception:
+            return s not in ("", "0", "false", "none", "nan")
+
+    return series.map(to_bool)
+
+
 async def seed_fees(engine: Engine):
     src_dir = CURRENT_FILE.parent / 'src'
     tables = {
@@ -32,6 +56,9 @@ async def seed_fees(engine: Engine):
     for table, path in tables.items():
         logger.info(f'Seeding table {table} from {path}')
         df = pd.read_csv(path)
+        # Coerce boolean-like columns where needed
+        if table == 'destination' and 'is_default' in df.columns:
+            df['is_default'] = _coerce_bool_series(df['is_default'])
         df.to_sql(table, engine, if_exists='append', index=False)
 
 
