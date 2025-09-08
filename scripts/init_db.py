@@ -59,7 +59,7 @@ async def seed_fees(engine: Engine):
         # Coerce boolean-like columns where needed
         if table == 'destination' and 'is_default' in df.columns:
             df['is_default'] = _coerce_bool_series(df['is_default'])
-        df.to_sql(table, engine, if_exists='append', index=False)
+        df.to_sql(table, engine, if_exists='replace', index=False)
 
 
 if __name__ == '__main__':
