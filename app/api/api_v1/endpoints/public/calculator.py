@@ -13,7 +13,8 @@ from app.enums.vehicle_type import VehicleTypeEnum
 from app.rpc_client.auction_api import ApiRpcClient
 from app.schemas.calculator import CalculatorDataIn
 from app.services.calculator.calculator_service import CalculatorService
-from app.services.calculator.exceptions import DestinationNotFoundError, LocationNotFoundError
+from app.services.calculator.exceptions import DestinationNotFoundError, LocationNotFoundError, \
+    DeliveryPriceNotFoundError, ShippingPriceNotFoundError, VehicleTypeNotFoundError
 from app.services.calculator.types import Calculator
 
 calculator_api_router = APIRouter(prefix="/calculator")
@@ -37,6 +38,12 @@ async def get_calculator(data: CalculatorDataIn = Param(...), db: AsyncSession =
     except DestinationNotFoundError as e:
         raise NotFoundProblem(detail=e.message)
     except LocationNotFoundError as e:
+        raise NotFoundProblem(detail=e.message)
+    except VehicleTypeNotFoundError as e:
+        raise NotFoundProblem(detail=e.message)
+    except ShippingPriceNotFoundError as e:
+        raise NotFoundProblem(detail=e.message)
+    except DeliveryPriceNotFoundError as e:
         raise NotFoundProblem(detail=e.message)
 
 @calculator_api_router.get(
@@ -83,6 +90,12 @@ async def get_calculator_by_lot(
     except DestinationNotFoundError as e:
         raise NotFoundProblem(detail=e.message)
     except LocationNotFoundError as e:
+        raise NotFoundProblem(detail=e.message)
+    except VehicleTypeNotFoundError as e:
+        raise NotFoundProblem(detail=e.message)
+    except ShippingPriceNotFoundError as e:
+        raise NotFoundProblem(detail=e.message)
+    except DeliveryPriceNotFoundError as e:
         raise NotFoundProblem(detail=e.message)
 
 

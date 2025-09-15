@@ -20,7 +20,8 @@ from app.enums.auction import AuctionEnum
 from app.enums.fee_type import FeeTypeEnum
 from app.enums.vehicle_type import VehicleTypeEnum
 from app.schemas.calculator import CalculatorDataIn
-from app.services.calculator.exceptions import LocationNotFoundError, DestinationNotFoundError
+from app.services.calculator.exceptions import LocationNotFoundError, DestinationNotFoundError, \
+    VehicleTypeNotFoundError, ShippingPriceNotFoundError, DeliveryPriceNotFoundError
 from app.services.calculator.types import City, DefaultCalculator, AdditionalFeesOut, EUCalculator, VATs, CalculatorOut, \
     Calculator, SpecialFee
 
@@ -28,7 +29,6 @@ from app.services.calculator.types import City, DefaultCalculator, AdditionalFee
 class CalculatorService:
     BROKER_FEE = 250
 
-    # add other additional fees for biaduto
 
 
     def __init__(self,
@@ -165,6 +165,13 @@ class CalculatorService:
             auction=self.data.auction,
             vehicle_type=self.data.vehicle_type
         )
+        if not vehicle_type_obj:
+            logger.warning(f'Vehicle type {self.data.vehicle_type} not found',
+                           extra={'vehicle_type': self.data.vehicle_type})
+            raise VehicleTypeNotFoundError()
+        logger.debug('Vehicle type found', extra={'vehicle_type': vehicle_type_obj.vehicle_type, 'id': vehicle_type_obj.id,
+                                                  'vehicle_type_auction': vehicle_type_obj.auction})
+
 
         if self.data.destination is None:
             destination = await destination_service.get_default()
@@ -177,8 +184,9 @@ class CalculatorService:
 
 
         additional_fees = await self.additional_fees_calculator()
+        logger.debug(f'Additional fees calculated, summ: {additional_fees.summ}', extra={'additional_fees': additional_fees.model_dump()})
 
-        delivery_location_obj = await location_service.get_location(self.data.location, vehicle_type_obj)
+        delivery_location_obj = await location_service.find_location(self.data.location, vehicle_type_obj)
         if not delivery_location_obj:
             logger.warning(f'Location {self.data.location} not found', extra={'location': self.data.location})
             raise LocationNotFoundError(f'Location {self.data.location} not found')
@@ -187,11 +195,29 @@ class CalculatorService:
             location=delivery_location_obj,
             vehicle_type=vehicle_type_obj
         )
+        if not delivery_prices:
+            logger.warning(f'Delivery prices not found for location {delivery_location_obj.name} and vehicle type {vehicle_type_obj.vehicle_type}',
+                           extra={'location': delivery_location_obj.name, 'vehicle_type': vehicle_type_obj.vehicle_type})
+            raise DeliveryPriceNotFoundError(f'Delivery prices not found for location {delivery_location_obj.name} and vehicle type {vehicle_type_obj.vehicle_type}')
+
+        logger.debug('Delivery prices found', extra={'delivery_prices_ids': [price.id for price in delivery_prices]})
+
         shipping_prices = await shipping_price_service.get_by_destination_and_vehicle_type(destination,
                                                                                            vehicle_type_obj)
+        if not shipping_prices:
+            logger.warning(f'Shipping prices not found for destination {destination.name} and vehicle type {vehicle_type_obj.vehicle_type}',
+                           extra={'destination': destination.name, 'vehicle_type': vehicle_type_obj.vehicle_type})
+            raise ShippingPriceNotFoundError(f'Shipping prices not found for destination {destination.name} and vehicle type {vehicle_type_obj.vehicle_type}')
 
-        delivery_cities = [City(name=delivery_price.terminal.name, price=delivery_price.price) for delivery_price in
-                           delivery_prices]
+        logger.debug('Shipping prices found', extra={'shipping_prices_ids': [price.id for price in shipping_prices]})
+
+        delivery_cities = []
+        for delivery_price in delivery_prices:
+            if delivery_price.price > 0:
+                delivery_cities.append(City(name=delivery_price.terminal.name, price=delivery_price.price))
+
+
+
         shipping_terminals = [City(name=shipping_price.terminal.name, price=shipping_price.price) for shipping_price in
                               shipping_prices]
 
@@ -199,6 +225,7 @@ class CalculatorService:
 
         rate = await exchange_rate_service.get_last_rate()
         rate = rate.rate
+        logger.debug('Exchange rate found', extra={'rate': rate})
 
         # custom_agency = round(350 / rate, 1)
 
