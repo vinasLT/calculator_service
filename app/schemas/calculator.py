@@ -13,3 +13,6 @@ class CalculatorDataIn(BaseModel):
     destination: str | None = Field(None, description="Destination (Port in Europe)")
     location: str = Field(..., description="Location")
 
+class PriceIn(BaseModel):
+    price: int = Field(..., gt=0, description="Price for vehicle")
+

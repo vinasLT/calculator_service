@@ -1,5 +1,6 @@
+
 import grpc
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Body
 from fastapi.params import Param
 from fastapi_cache import default_key_builder
 from fastapi_cache.decorator import cache
@@ -11,18 +12,17 @@ from app.database.db.session import get_async_db
 from app.enums.auction import AuctionEnum
 from app.enums.vehicle_type import VehicleTypeEnum
 from app.rpc_client.auction_api import ApiRpcClient
-from app.schemas.calculator import CalculatorDataIn
+from app.schemas.calculator import CalculatorDataIn, PriceIn
 from app.services.calculator.calculator_service import CalculatorService
-from app.services.calculator.exceptions import DestinationNotFoundError, LocationNotFoundError, \
-    DeliveryPriceNotFoundError, ShippingPriceNotFoundError, VehicleTypeNotFoundError
+from app.services.calculator.exceptions import NotFoundError
 from app.services.calculator.types import Calculator
 
 calculator_api_router = APIRouter(prefix="/calculator")
 
-@calculator_api_router.get("", response_model=Calculator, tags=["calculator"], name='get_calculator',
+@calculator_api_router.post("", response_model=Calculator, tags=["calculator"], name='get_calculator',
                            description="Get calculator by data from lot", summary='Get calculator by data (PREFERRED)')
 @cache(expire=60*15, key_builder=default_key_builder)
-async def get_calculator(data: CalculatorDataIn = Param(...), db: AsyncSession = Depends(get_async_db)):
+async def get_calculator(data: CalculatorDataIn = Body(...), db: AsyncSession = Depends(get_async_db)):
     try:
         calculator_service = CalculatorService(
             db=db,
@@ -35,15 +35,7 @@ async def get_calculator(data: CalculatorDataIn = Param(...), db: AsyncSession =
         )
 
         return await calculator_service.calculate()
-    except DestinationNotFoundError as e:
-        raise NotFoundProblem(detail=e.message)
-    except LocationNotFoundError as e:
-        raise NotFoundProblem(detail=e.message)
-    except VehicleTypeNotFoundError as e:
-        raise NotFoundProblem(detail=e.message)
-    except ShippingPriceNotFoundError as e:
-        raise NotFoundProblem(detail=e.message)
-    except DeliveryPriceNotFoundError as e:
+    except NotFoundError as e:
         raise NotFoundProblem(detail=e.message)
 
 @calculator_api_router.get(
@@ -57,7 +49,7 @@ async def get_calculator(data: CalculatorDataIn = Param(...), db: AsyncSession =
 async def get_calculator_by_lot(
         auction: AuctionEnum = Path(..., description='Auction'),
         lot_id: str = Path(..., description='Lot id'),
-        price: int = Param(..., gt=0, description="Price for vehicle"),
+        price: PriceIn = Body(...),
         db: AsyncSession = Depends(get_async_db)
 ):
     try:
@@ -67,7 +59,7 @@ async def get_calculator_by_lot(
 
         calculator_service = CalculatorService(
             db=db,
-            price=price,
+            price=price.price,
             auction=auction,
             fee_type=None,
             location=lot.lot[0].location,
@@ -87,16 +79,9 @@ async def get_calculator_by_lot(
         else:
             logger.error(f'Unknown error on auction {auction}', exc_info=e)
             raise NotFoundProblem('Unknown error in Auction API service')
-    except DestinationNotFoundError as e:
+    except NotFoundError as e:
         raise NotFoundProblem(detail=e.message)
-    except LocationNotFoundError as e:
-        raise NotFoundProblem(detail=e.message)
-    except VehicleTypeNotFoundError as e:
-        raise NotFoundProblem(detail=e.message)
-    except ShippingPriceNotFoundError as e:
-        raise NotFoundProblem(detail=e.message)
-    except DeliveryPriceNotFoundError as e:
-        raise NotFoundProblem(detail=e.message)
+
 
 
 

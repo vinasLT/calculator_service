@@ -1,27 +1,28 @@
-class LocationNotFoundError(Exception):
+class CalculatorError(Exception):
+    pass
+
+class NotFoundError(CalculatorError):
+    """Базовый класс для всех ошибок 'не найдено'"""
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)
+
+class LocationNotFoundError(NotFoundError):
     def __init__(self, message="Location not found"):
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(message)
 
-class DestinationNotFoundError(Exception):
+class DestinationNotFoundError(NotFoundError):
     def __init__(self, message="Destination not found"):
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(message)
 
-
-class VehicleTypeNotFoundError(Exception):
+class VehicleTypeNotFoundError(NotFoundError):
     def __init__(self, message="Vehicle type not found"):
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(message)
 
-class ShippingPriceNotFoundError(Exception):
-    def __init__(self, message="Shipping price not found"):
-        self.message = message
-        super().__init__(self.message)
-
-class DeliveryPriceNotFoundError(Exception):
+class DeliveryPriceNotFoundError(NotFoundError):
     def __init__(self, message="Delivery price not found"):
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(message)
 
-
+class ShippingPriceNotFoundError(NotFoundError):
+    def __init__(self, message="Shipping price not found"):
+        super().__init__(message)
