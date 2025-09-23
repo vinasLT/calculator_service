@@ -7,6 +7,10 @@ class Environment(str, Enum):
     DEVELOPMENT = "development"
     PRODUCTION = "production"
 
+class Permissions(str, Enum):
+    EXCHANGE_RATE_WRITE = "calculator.exchange-rate:write"
+
+
 class Settings(BaseSettings):
     # Database
     DB_HOST: str = "localhost"

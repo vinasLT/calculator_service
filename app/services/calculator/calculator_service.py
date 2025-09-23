@@ -1,10 +1,7 @@
 import asyncio
-from datetime import datetime, UTC
-from typing import Sequence
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.logger import logger
+from app.core.logger import logger, log_async_execution_time
 from app.database.crud.additional_fee import AdditionalFeeService
 from app.database.crud.additional_special_fee import AdditionalSpecialFeeService
 from app.database.crud.delivery_price import DeliveryPriceService
@@ -46,7 +43,7 @@ class CalculatorService:
                                      vehicle_type=vehicle_type,
                                      destination=destination)
         self.db = db
-
+    @log_async_execution_time('Additional Fees Calculation')
     async def additional_fees_calculator(self) -> AdditionalFeesOut:
         additional_special_fee_service = AdditionalSpecialFeeService(self.db)
         fee_type_service = FeeTypeService(self.db)
@@ -54,11 +51,9 @@ class CalculatorService:
         additional_fee_service = AdditionalFeeService(self.db)
 
         fees = await additional_special_fee_service.get_additional_special_fee(self.data.auction)
-        print(fees)
 
         all_fees_summ = sum([fee.amount for fee in fees])
         special_fees_obj = [SpecialFee(name=fee.name, price=fee.amount) for fee in fees]
-        print(all_fees_summ, 'all fees summ')
 
         if self.data.fee_type:
             fee_type = await fee_type_service.get_by_fee_auction(self.data.auction, self.data.fee_type)
@@ -103,7 +98,7 @@ class CalculatorService:
         filtered_shipping = [terminal for terminal in shipping_terminals if terminal.name in common_names]
 
         return filtered_delivery, filtered_shipping
-
+    @log_async_execution_time('Calculator into currency ')
     async def calculate_in_euro(self, calculator: CalculatorOut)-> CalculatorOut:
         exchange_rate_service = ExchangeRateService(self.db)
         rate_obj = await exchange_rate_service.get_last_rate()
@@ -144,15 +139,15 @@ class CalculatorService:
             totals=city_to_euro(calculator.eu_calculator.totals),
             vats=VATs(vats=city_to_euro(calculator.eu_calculator.vats.vats),
                       eu_vats=city_to_euro(calculator.eu_calculator.vats.eu_vats)),
+            totals_without_default=city_to_euro(calculator.eu_calculator.totals_without_default),
+            custom_agency=usd_to_euro(calculator.eu_calculator.custom_agency)
 
         )
-
         return CalculatorOut(
             calculator=default_calculator,
             eu_calculator=eu_calculator
         )
-
-
+    @log_async_execution_time('Calculations')
     async def calculate(self) -> Calculator:
         vehicle_type_service = VehicleTypeService(self.db)
         location_service = LocationService(self.db)
@@ -169,9 +164,9 @@ class CalculatorService:
             logger.warning(f'Vehicle type {self.data.vehicle_type} not found',
                            extra={'vehicle_type': self.data.vehicle_type})
             raise VehicleTypeNotFoundError()
-        logger.debug('Vehicle type found', extra={'vehicle_type': vehicle_type_obj.vehicle_type, 'id': vehicle_type_obj.id,
-                                                  'vehicle_type_auction': vehicle_type_obj.auction})
-
+        logger.debug('Vehicle type found',
+                     extra={'vehicle_type': vehicle_type_obj.vehicle_type, 'id': vehicle_type_obj.id,
+                            'vehicle_type_auction': vehicle_type_obj.auction})
 
         if self.data.destination is None:
             destination = await destination_service.get_default()
@@ -182,9 +177,9 @@ class CalculatorService:
                                extra={'destination': self.data.destination})
                 raise DestinationNotFoundError(f'Destination {self.data.destination} not found')
 
-
         additional_fees = await self.additional_fees_calculator()
-        logger.debug(f'Additional fees calculated, summ: {additional_fees.summ}', extra={'additional_fees': additional_fees.model_dump()})
+        logger.debug(f'Additional fees calculated, summ: {additional_fees.summ}',
+                     extra={'additional_fees': additional_fees.model_dump()})
 
         delivery_location_obj = await location_service.find_location(self.data.location, vehicle_type_obj)
         if not delivery_location_obj:
@@ -195,19 +190,42 @@ class CalculatorService:
             location=delivery_location_obj,
             vehicle_type=vehicle_type_obj
         )
+
         if not delivery_prices:
-            logger.warning(f'Delivery prices not found for location {delivery_location_obj.name} and vehicle type {vehicle_type_obj.vehicle_type}',
-                           extra={'location': delivery_location_obj.name, 'vehicle_type': vehicle_type_obj.vehicle_type})
-            raise DeliveryPriceNotFoundError(f'Delivery prices not found for location {delivery_location_obj.name} and vehicle type {vehicle_type_obj.vehicle_type}')
+            logger.warning(
+                f'Delivery prices not found for location {delivery_location_obj.name} and vehicle type {vehicle_type_obj.vehicle_type}',
+                extra={'location': delivery_location_obj.name, 'vehicle_type': vehicle_type_obj.vehicle_type})
+            raise DeliveryPriceNotFoundError(
+                f'Delivery prices not found for location {delivery_location_obj.name} and vehicle type {vehicle_type_obj.vehicle_type}')
 
         logger.debug('Delivery prices found', extra={'delivery_prices_ids': [price.id for price in delivery_prices]})
 
+        # Collect terminals from delivery prices
+        terminals = [dp.terminal for dp in delivery_prices]
+
+        # Collect all available destinations for these terminals
+        available_destinations = set()
+        for terminal in terminals:
+            terminal_shipping_prices = await shipping_price_service.get_by_terminal_and_vehicle_type(
+                terminal=terminal,
+                vehicle_type=vehicle_type_obj
+            )
+            for sp in terminal_shipping_prices:
+                available_destinations.add(sp.destination.name)  # Assuming destination has a 'name' attribute
+
+        # Convert to sorted list for consistency
+        destinations_list = sorted(list(available_destinations))
+        logger.debug(f'Available destinations found: {destinations_list}', extra={'count': len(destinations_list)})
+
         shipping_prices = await shipping_price_service.get_by_destination_and_vehicle_type(destination,
                                                                                            vehicle_type_obj)
+
         if not shipping_prices:
-            logger.warning(f'Shipping prices not found for destination {destination.name} and vehicle type {vehicle_type_obj.vehicle_type}',
-                           extra={'destination': destination.name, 'vehicle_type': vehicle_type_obj.vehicle_type})
-            raise ShippingPriceNotFoundError(f'Shipping prices not found for destination {destination.name} and vehicle type {vehicle_type_obj.vehicle_type}')
+            logger.warning(
+                f'Shipping prices not found for destination {destination.name} and vehicle type {vehicle_type_obj.vehicle_type}',
+                extra={'destination': destination.name, 'vehicle_type': vehicle_type_obj.vehicle_type})
+            raise ShippingPriceNotFoundError(
+                f'Shipping prices not found for destination {destination.name} and vehicle type {vehicle_type_obj.vehicle_type}')
 
         logger.debug('Shipping prices found', extra={'shipping_prices_ids': [price.id for price in shipping_prices]})
 
@@ -215,8 +233,6 @@ class CalculatorService:
         for delivery_price in delivery_prices:
             if delivery_price.price > 0:
                 delivery_cities.append(City(name=delivery_price.terminal.name, price=delivery_price.price))
-
-
 
         shipping_terminals = [City(name=shipping_price.terminal.name, price=shipping_price.price) for shipping_price in
                               shipping_prices]
@@ -227,9 +243,10 @@ class CalculatorService:
         rate = rate.rate
         logger.debug('Exchange rate found', extra={'rate': rate})
 
-        # custom_agency = round(350 / rate, 1)
+        custom_agency = round(350 / rate, 1)
 
-        # Обычный калькулятор (в долларах)
+        logger.debug(f'Custom agency = {custom_agency}')
+
         total_default: list[City] = []
         for delivery, shipping in zip(delivery_cities, shipping_terminals):
             total_price = (
@@ -256,6 +273,7 @@ class CalculatorService:
         eu_vats_list: list[City] = []
         vats_list: list[City] = []
         total_eu: list[City] = []
+        total_without_default: list[City] = []
 
         for delivery, shipping in zip(delivery_cities, shipping_terminals):
             base_sum = (
@@ -279,10 +297,11 @@ class CalculatorService:
                 self.data.price +
                 eu_vat +
                 vat +
-                shipping.price
-                # custom_agency
+                shipping.price +
+                custom_agency
             )
             total_eu.append(City(name=delivery.name, price=total_price_eu))
+            total_without_default.append(City(name=delivery.name, price=round(total_price_eu - base_sum)))
 
         vats_obj = VATs(
             eu_vats=eu_vats_list,
@@ -295,18 +314,21 @@ class CalculatorService:
             ocean_ship=shipping_terminals,
             additional=additional_fees,
             vats=vats_obj,
-            custom_agency=int(0),
-            totals=total_eu
+            custom_agency=round(custom_agency),
+            totals=total_eu,
+            totals_without_default=total_without_default
         )
 
         calculator_out = CalculatorOut(
             calculator=calculator,
             eu_calculator=eu_calculator,
+
         )
 
         return Calculator(
             calculator_in_dollars=calculator_out,
-            calculator_in_currency=await self.calculate_in_euro(calculator_out)
+            calculator_in_currency=await self.calculate_in_euro(calculator_out),
+            destinations=destinations_list
         )
 
 
