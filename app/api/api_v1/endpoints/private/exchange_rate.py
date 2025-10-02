@@ -8,10 +8,10 @@ from app.database.db.session import get_async_db
 from app.database.schemas.exchange_rate import ExchangeRateCreate
 from app.schemas.exchange_rate import ExchangeRateIn
 
-exchange_rate_router = APIRouter(prefix='exchange_rate/')
+exchange_rate_router = APIRouter(prefix='/exchange_rate')
 
 
-@exchange_rate_router.post("", dependencies=[Depends(require_permissions(Permissions.EXCHANGE_RATE_WRITE))])
+@exchange_rate_router.post("/", dependencies=[Depends(require_permissions(Permissions.EXCHANGE_RATE_WRITE))])
 async def edit_exchange_rate(data: ExchangeRateIn = Body(...),db: AsyncSession = Depends(get_async_db)):
     exchange_rate_service = ExchangeRateService(db)
     response = await exchange_rate_service.create(ExchangeRateCreate(rate=data.rate))
