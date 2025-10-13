@@ -1,5 +1,7 @@
 import uvicorn
 from fastapi import FastAPI
+
+from app.api.api_v1.api import private_v1_router, public_v1_router
 from app.core.app_factory import create_app
 
 app: FastAPI = create_app()
