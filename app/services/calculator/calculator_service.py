@@ -68,7 +68,7 @@ class CalculatorService:
         auction_fee_obj = await fee_service.get_fee_in_car_price(fee_type, self.data.price)
 
         if auction_fee_obj.car_price_fee < 1:
-            auction_fee = self.data.price * auction_fee_obj.car_price_fee
+            auction_fee = round(self.data.price * auction_fee_obj.car_price_fee)
         else:
             auction_fee = auction_fee_obj.car_price_fee
 
