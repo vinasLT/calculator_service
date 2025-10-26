@@ -12,7 +12,7 @@ exchange_rate_router = APIRouter(prefix='/exchange-rate')
 
 
 @exchange_rate_router.post("/", dependencies=[Depends(require_permissions(Permissions.EXCHANGE_RATE_WRITE))],
-                           description=f'Change exchange rate, Required permissions: {Permissions.EXCHANGE_RATE_WRITE}')
+                           description=f'Change exchange rate, Required permissions: {Permissions.EXCHANGE_RATE_WRITE.value}')
 async def edit_exchange_rate(data: ExchangeRateIn = Body(...),db: AsyncSession = Depends(get_async_db)):
     exchange_rate_service = ExchangeRateService(db)
     response = await exchange_rate_service.create(ExchangeRateCreate(rate=data.rate))
