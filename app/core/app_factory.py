@@ -7,7 +7,7 @@ from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 from fastapi_problem.handler import new_exception_handler, add_exception_handler
 
-from app.api.api_v1.api import api_v1_router
+from app.api.api_v1.api import private_v1_router, public_v1_router
 from app.config import settings
 from app.core.logger import logger
 
@@ -17,7 +17,8 @@ def setup_middleware_and_handlers(app: FastAPI):
     add_exception_handler(app, eh)
 
 def setup_routers(app: FastAPI):
-    app.include_router(api_v1_router)
+    app.include_router(private_v1_router)
+    app.include_router(public_v1_router)
     @app.get("/health", tags=["Health"])
     async def health_check():
         return {"status": "ok"}
