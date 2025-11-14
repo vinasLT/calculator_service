@@ -7,6 +7,7 @@ from app.database.crud.base import BaseService, CreateSchemaType, ModelType
 from app.database.models import Location, VehicleType, ShippingPrice, DeliveryPrice
 
 from app.database.schemas.location import LocationCreate, LocationUpdate
+from app.enums.auction import AuctionEnum
 
 
 class LocationService(BaseService[Location, LocationCreate, LocationUpdate]):
@@ -145,11 +146,38 @@ class LocationService(BaseService[Location, LocationCreate, LocationUpdate]):
         )
         return result.scalar_one_or_none()
 
-    async def get_by_name(self, name: str) -> Location | None:
-        result = await self.session.execute(
-            select(Location).where(Location.name == name)
-        )
-        return result.scalar_one_or_none()
+    async def get_with_search_auction(self,
+                                      search: str | None = None,
+                                      auction: AuctionEnum | None = None,
+                                      get_stmt: bool = False):
+        stmt = select(Location).distinct()
+
+        filters = []
+
+        if search:
+            search_value = search.strip()
+            if search_value:
+                pattern = f"%{search_value}%"
+                filters.append(or_(
+                    Location.name.ilike(pattern),
+                    Location.city.ilike(pattern),
+                    Location.state.ilike(pattern)
+                ))
+
+        if auction:
+            stmt = stmt.join(DeliveryPrice).join(VehicleType)
+            filters.append(VehicleType.auction == auction)
+
+        if filters:
+            stmt = stmt.where(and_(*filters))
+
+        if get_stmt:
+            return stmt
+
+        result = await self.session.execute(stmt)
+        return result.scalars().unique().all()
+
+
 
 
 
