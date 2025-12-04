@@ -167,10 +167,10 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 logger.warning(f"Location not found while building detailed data: {params.location}")
                 return None
 
-            fee_type_obj = None
-            if params.fee_type:
-                fee_type_obj = await fee_type_service.get_by_fee_auction(params.auction, params.fee_type)
 
+            fee_type_obj = await fee_type_service.get_by_fee_auction(params.auction, params.fee_type if params.fee_type else FeeTypeEnum.NON_CLEAN_TITLE_FEE)
+
+            print(fee_type_obj)
             delivery_prices = await delivery_price_service.get_by_terminal_location_vehicle_type(
                 location=location_obj,
                 vehicle_type=vehicle_type_obj,
