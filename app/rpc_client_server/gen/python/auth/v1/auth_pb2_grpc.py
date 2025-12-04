@@ -2,10 +2,10 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from payment.v1 import stripe_pb2 as payment_dot_v1_dot_stripe__pb2
+from auth.v1 import auth_pb2 as auth_dot_v1_dot_auth__pb2
 
 
-class StripeServiceStub(object):
+class AuthServiceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -14,43 +14,43 @@ class StripeServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.GetCheckoutLink = channel.unary_unary(
-                '/payment.v1.StripeService/GetCheckoutLink',
-                request_serializer=payment_dot_v1_dot_stripe__pb2.GetCheckoutLinkRequest.SerializeToString,
-                response_deserializer=payment_dot_v1_dot_stripe__pb2.GetCheckoutLinkResponse.FromString,
+        self.GetUser = channel.unary_unary(
+                '/auth.v1.AuthService/GetUser',
+                request_serializer=auth_dot_v1_dot_auth__pb2.GetUserRequest.SerializeToString,
+                response_deserializer=auth_dot_v1_dot_auth__pb2.GetUserResponse.FromString,
                 _registered_method=True)
 
 
-class StripeServiceServicer(object):
+class AuthServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def GetCheckoutLink(self, request, context):
+    def GetUser(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_StripeServiceServicer_to_server(servicer, server):
+def add_AuthServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'GetCheckoutLink': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetCheckoutLink,
-                    request_deserializer=payment_dot_v1_dot_stripe__pb2.GetCheckoutLinkRequest.FromString,
-                    response_serializer=payment_dot_v1_dot_stripe__pb2.GetCheckoutLinkResponse.SerializeToString,
+            'GetUser': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetUser,
+                    request_deserializer=auth_dot_v1_dot_auth__pb2.GetUserRequest.FromString,
+                    response_serializer=auth_dot_v1_dot_auth__pb2.GetUserResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'payment.v1.StripeService', rpc_method_handlers)
+            'auth.v1.AuthService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('payment.v1.StripeService', rpc_method_handlers)
+    server.add_registered_method_handlers('auth.v1.AuthService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class StripeService(object):
+class AuthService(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def GetCheckoutLink(request,
+    def GetUser(request,
             target,
             options=(),
             channel_credentials=None,
@@ -63,9 +63,9 @@ class StripeService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/payment.v1.StripeService/GetCheckoutLink',
-            payment_dot_v1_dot_stripe__pb2.GetCheckoutLinkRequest.SerializeToString,
-            payment_dot_v1_dot_stripe__pb2.GetCheckoutLinkResponse.FromString,
+            '/auth.v1.AuthService/GetUser',
+            auth_dot_v1_dot_auth__pb2.GetUserRequest.SerializeToString,
+            auth_dot_v1_dot_auth__pb2.GetUserResponse.FromString,
             options,
             channel_credentials,
             insecure,
