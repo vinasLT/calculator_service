@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # RPC
     RPC_API_URL: str = "localhost:50051"
-    GRPC_SERVER_PORT: str = "50051"
+    GRPC_SERVER_PORT: int = 50052
 
     @property
     def enable_docs(self) -> bool:

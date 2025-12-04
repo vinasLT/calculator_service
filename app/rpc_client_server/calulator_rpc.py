@@ -6,6 +6,9 @@ import grpc
 from app.core.logger import logger
 from app.database.crud.delivery_price import DeliveryPriceService
 from app.database.crud.destination import DestinationService
+from app.database.crud.fee_type import FeeTypeService
+from app.database.crud.location import LocationService
+from app.database.crud.shipping_price import ShippingPriceService
 from app.database.crud.vehicle_type import VehicleTypeService
 from app.database.db.session import get_db_context
 from app.database.models import Location, Destination, FeeType
@@ -125,6 +128,89 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             logger.error("Error creating CalculatorOut: %s", e, exc_info=True)
             raise
 
+    async def _build_detailed_data(self, db, params):
+        logger.debug("Building detailed calculator data for params: %s", params)
+        try:
+            vehicle_type_service = VehicleTypeService(db)
+            location_service = LocationService(db)
+            delivery_price_service = DeliveryPriceService(db)
+            fee_type_service = FeeTypeService(db)
+            shipping_price_service = ShippingPriceService(db)
+
+            vehicle_type_obj = await vehicle_type_service.get_by_auction_and_type(
+                params["auction"],
+                params["vehicle_type"],
+            )
+            if not vehicle_type_obj:
+                logger.warning("Vehicle type not found while building detailed data")
+                return None
+
+            location_obj = await location_service.find_location(params["location"], vehicle_type_obj)
+            if not location_obj:
+                logger.warning("Location not found while building detailed data: %s", params["location"])
+                return None
+
+            fee_type_obj = None
+            if params.get("fee_type"):
+                fee_type_obj = await fee_type_service.get_by_fee_auction(params["auction"], params["fee_type"])
+
+            delivery_prices = await delivery_price_service.get_by_terminal_location_vehicle_type(
+                location=location_obj,
+                vehicle_type=vehicle_type_obj,
+            )
+
+            terminals = [
+                calculator_pb2.Terminal(
+                    terminal_id=dp.terminal.id if dp.terminal else 0,
+                    terminal_name=dp.terminal.name if dp.terminal and dp.terminal.name else "",
+                )
+                for dp in delivery_prices
+                if dp.terminal
+            ]
+
+            destination_map = {}
+            for dp in delivery_prices:
+                if not dp.terminal:
+                    continue
+                shipping_prices = await shipping_price_service.get_by_terminal_and_vehicle_type(
+                    dp.terminal,
+                    vehicle_type_obj,
+                )
+                for sp in shipping_prices:
+                    dest_id = sp.destination_id or 0
+                    if dest_id in destination_map:
+                        continue
+                    destination_map[dest_id] = calculator_pb2.Destination(
+                        destination_id=dest_id,
+                        destination_name=sp.destination.name if sp.destination else "",
+                    )
+
+            detailed_kwargs = dict(
+                location_id=location_obj.id,
+                location_data=calculator_pb2.Location(
+                    name=location_obj.name or "",
+                    city=location_obj.city or "",
+                    state=location_obj.state or "",
+                    postal_code=location_obj.postal_code or "",
+                    email=location_obj.email or "",
+                ),
+                terminals=terminals,
+                available_destinations=list(destination_map.values()),
+            )
+
+            if fee_type_obj:
+                detailed_kwargs["fee_type_id"] = fee_type_obj.id
+                detailed_kwargs["fee_type_data"] = calculator_pb2.FeeType(
+                    auction=fee_type_obj.auction.value if fee_type_obj.auction else "",
+                    fee_type=fee_type_obj.fee_type.value if fee_type_obj.fee_type else "",
+                )
+
+            return calculator_pb2.DetailedCalculatorData(**detailed_kwargs)
+
+        except Exception as e:
+            logger.error("Failed to build detailed calculator data: %s", e, exc_info=True)
+            return None
+
     async def _calculate(self, params, context):
         logger.info("Starting calculation with params: %s", params)
         try:
@@ -137,36 +223,43 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
 
                 calculator_out = self._create_calculator_out(result.calculator_in_dollars)
                 logger.debug("CalculatorOut created successfully")
-                return calculator_out, None
+                detailed_data = await self._build_detailed_data(db, params)
+                logger.debug("Detailed calculator data prepared")
+                return calculator_out, detailed_data, None
         except NotFoundError as e:
             logger.warning("Not found error: %s", e.message)
             context.set_code(grpc.StatusCode.NOT_FOUND)
             context.set_details(e.message)
-            return None, e.message
+            return None, None, e.message
         except ValueError as e:
             logger.error("Validation error: %s", e)
             context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
             context.set_details(str(e))
-            return None, str(e)
+            return None, None, str(e)
         except Exception as e:
             logger.exception("Unexpected error in calculation: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details("Internal server error during calculation")
-            return None, "Internal server error"
+            return None, None, "Internal server error"
 
     async def _calculate_and_respond(self, params, context, response_class):
-        calculator_out, error_message = await self._calculate(params, context)
+        calculator_out, detailed_data, error_message = await self._calculate(params, context)
         if calculator_out is None:
             return response_class(
                 message=error_message or "Internal server error",
                 success=False,
             )
 
-        return response_class(
+        response_kwargs = dict(
             data=calculator_out,
             message="Success",
             success=True,
         )
+
+        if detailed_data:
+            response_kwargs["detailed_data"] = detailed_data
+
+        return response_class(**response_kwargs)
 
     @staticmethod
     async def _get_entity_or_set_not_found(db, model, obj_id: int, entity_name: str, context):
@@ -376,7 +469,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 destination=destination_value,
             )
 
-            calculator_out, error_message = await self._calculate(params, context)
+            calculator_out, _, error_message = await self._calculate(params, context)
             if calculator_out is None:
                 return calculator_pb2.GetCalculatorWithIdsResponse()
 

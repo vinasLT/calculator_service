@@ -42,13 +42,13 @@ class GracefulServer:
                 reflection.enable_server_reflection(service_names, self.server)
                 logger.info("gRPC reflection enabled for development")
             except Exception as exc:
-                logger.warning("Failed to enable reflection: %s", exc)
+                logger.warning(f"Failed to enable reflection: {exc}")
 
-        logger.info("gRPC Server configured on %s", listen_addr)
+        logger.info(f"gRPC Server configured on {listen_addr}")
 
     def setup_signal_handlers(self):
         def signal_handler(signum, frame):
-            logger.info("Received signal %s, initiating graceful shutdown...", signum)
+            logger.info(f"Received signal {signum}, initiating graceful shutdown...")
             asyncio.create_task(self.shutdown())
 
         signal.signal(signal.SIGTERM, signal_handler)
@@ -80,7 +80,7 @@ async def main():
     try:
         await server.serve()
     except Exception as exc:
-        logger.error("Server error: %s", exc, exc_info=True)
+        logger.error(f"Server error: {exc}", exc_info=True)
         raise
 
 
