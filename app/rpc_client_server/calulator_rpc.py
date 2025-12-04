@@ -1,7 +1,8 @@
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Coroutine
 
 import grpc
+from pydantic import BaseModel
 
 from app.core.logger import logger
 from app.database.crud.delivery_price import DeliveryPriceService
@@ -18,7 +19,7 @@ from app.enums.vehicle_type import VehicleTypeEnum
 from app.rpc_client_server.auction_api import ApiRpcClient
 from app.rpc_client_server.gen.python.calculator.v1 import calculator_pb2_grpc, calculator_pb2
 from app.rpc_client_server.gen.python.calculator.v1.calculator_pb2 import (
-    CalculatorOut,
+    CalculatorOut as CalculatorOutProto,
     GetCalculatorWithDataResponse,
     DefaultCalculator,
     EUCalculator,
@@ -28,14 +29,23 @@ from app.rpc_client_server.gen.python.calculator.v1.calculator_pb2 import (
     VATs,
     GetCalculatorWithoutDataResponse,
     GetCalculatorWithDataBatchResponse,
-    CalculatorBatchItem,
+    CalculatorBatchItem, CalculatorOut, DetailedCalculatorData,
 )
 from app.services.calculator.calculator_service import CalculatorService
-from app.services.calculator.exceptions import NotFoundError
+from app.services.calculator.types import CalculatorOut
+
 
 if TYPE_CHECKING:
     from app.services.calculator.types import City as PydanticCity
     from app.services.calculator.types import SpecialFee as PydanticSpecialFee
+
+class CalculatorRequest(BaseModel):
+    price: int
+    auction: AuctionEnum
+    fee_type: FeeTypeEnum | None
+    location: str
+    vehicle_type: VehicleTypeEnum
+    destination: str | None
 
 
 class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
@@ -43,26 +53,19 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
     @staticmethod
     def transform_to_proto(data, proto_class):
         logger.debug(
-            "Transforming data to proto %s, data count: %s",
-            proto_class.__name__,
-            len(data) if data else 0,
-        )
+            f"Transforming data to proto {proto_class.__name__}, data count: {len(data) if data else 0}")
         try:
             if not data:
-                logger.debug("No data to transform for %s", proto_class.__name__)
+                logger.debug(f"No data to transform for {proto_class.__name__}")
                 return []
             result = [proto_class(price=item.price, name=item.name) for item in data]
-            logger.debug(
-                "Successfully transformed %s items to %s",
-                len(result),
-                proto_class.__name__,
-            )
+            logger.debug(f"Successfully transformed {len(result)} items to {proto_class.__name__}")
             return result
         except (AttributeError, TypeError) as e:
-            logger.error("Error transforming data to proto %s: %s", proto_class.__name__, e)
+            logger.error(f"Error transforming data to proto {proto_class.__name__}: {e}")
             raise ValueError(f"Invalid data format for {proto_class.__name__}")
 
-    def _create_calculator_out(self, calc) -> CalculatorOut:
+    def _create_calculator_out(self, calc: CalculatorOut) -> CalculatorOutProto:
         logger.debug("Creating CalculatorOut from calculation result")
         try:
             c = calc.calculator
@@ -93,7 +96,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             eu_calculator_exists = calc.eu_calculator is not None
             logger.debug("EU calculator exists: %s", eu_calculator_exists)
 
-            result = CalculatorOut(
+            result = CalculatorOutProto(
                 calculator=DefaultCalculator(
                     **base,
                     totals=self.transform_to_proto(c.totals, City),
@@ -128,8 +131,8 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             logger.error("Error creating CalculatorOut: %s", e, exc_info=True)
             raise
 
-    async def _build_detailed_data(self, db, params):
-        logger.debug("Building detailed calculator data for params: %s", params)
+    async def _build_detailed_data(self, db, params: CalculatorRequest) -> DetailedCalculatorData | None:
+        logger.debug(f"Building detailed calculator data for params: {params}")
         try:
             vehicle_type_service = VehicleTypeService(db)
             location_service = LocationService(db)
@@ -211,55 +214,20 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             logger.error("Failed to build detailed calculator data: %s", e, exc_info=True)
             return None
 
-    async def _calculate(self, params, context):
-        logger.info("Starting calculation with params: %s", params)
-        try:
-            async with get_db_context() as db:
-                logger.debug("Database connection established")
-                calculator_service = CalculatorService(db=db, **params)
-                logger.debug("CalculatorService instance created")
-                result = await calculator_service.calculate()
-                logger.info("Calculation completed successfully")
+    async def _calculate(self, params: CalculatorRequest)-> tuple[CalculatorOut, DetailedCalculatorData | None]:
+        async with get_db_context() as db:
+            logger.debug("Database connection established")
+            calculator_service = CalculatorService(db=db, **params.model_dump())
+            logger.debug("CalculatorService instance created")
+            result = await calculator_service.calculate()
+            logger.info("Calculation completed successfully")
 
-                calculator_out = self._create_calculator_out(result.calculator_in_dollars)
-                logger.debug("CalculatorOut created successfully")
-                detailed_data = await self._build_detailed_data(db, params)
-                logger.debug("Detailed calculator data prepared")
-                return calculator_out, detailed_data, None
-        except NotFoundError as e:
-            logger.warning("Not found error: %s", e.message)
-            context.set_code(grpc.StatusCode.NOT_FOUND)
-            context.set_details(e.message)
-            return None, None, e.message
-        except ValueError as e:
-            logger.error("Validation error: %s", e)
-            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
-            context.set_details(str(e))
-            return None, None, str(e)
-        except Exception as e:
-            logger.exception("Unexpected error in calculation: %s", e)
-            context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details("Internal server error during calculation")
-            return None, None, "Internal server error"
+            calculator_out = self._create_calculator_out(result.calculator_in_dollars)
+            logger.debug("CalculatorOut created successfully")
+            detailed_data = await self._build_detailed_data(db, params)
+            logger.debug("Detailed calculator data prepared")
+            return calculator_out, detailed_data
 
-    async def _calculate_and_respond(self, params, context, response_class):
-        calculator_out, detailed_data, error_message = await self._calculate(params, context)
-        if calculator_out is None:
-            return response_class(
-                message=error_message or "Internal server error",
-                success=False,
-            )
-
-        response_kwargs = dict(
-            data=calculator_out,
-            message="Success",
-            success=True,
-        )
-
-        if detailed_data:
-            response_kwargs["detailed_data"] = detailed_data
-
-        return response_class(**response_kwargs)
 
     @staticmethod
     async def _get_entity_or_set_not_found(db, model, obj_id: int, entity_name: str, context):
@@ -273,28 +241,15 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
         context.set_details(message)
         return None
 
-    def _safe_enum_conversion(self, value, enum_class, field_name: str):
-        logger.debug("Converting %s value '%s' to %s", field_name, value, enum_class.__name__)
-        try:
-            result = enum_class(value)
-            logger.debug("Successfully converted %s to %s", field_name, result)
-            return result
-        except (ValueError, KeyError):
-            logger.error("Failed to convert %s: %s to %s", field_name, value, enum_class.__name__)
-            raise ValueError(f"Invalid {field_name}: {value}. Expected one of {[e.value for e in enum_class]}")
-
-    def get_params_from_request(self, request: calculator_pb2.GetCalculatorWithDataRequest):
-        params = dict(
-            price=request.price,
-            auction=self._safe_enum_conversion(request.auction.upper(), AuctionEnum, "auction"),
-            fee_type=self._safe_enum_conversion(request.fee_type, FeeTypeEnum, "fee_type")
-            if request.fee_type
-            else None,
-            location=request.location,
-            vehicle_type=self._safe_enum_conversion(request.vehicle_type, VehicleTypeEnum, "vehicle_type"),
-            destination=request.destination if request.destination else None,
+    def get_params_from_request(self, request: calculator_pb2.GetCalculatorWithDataRequest)-> CalculatorRequest:
+        return CalculatorRequest(
+                price=request.price,
+                auction=AuctionEnum(request.auction.upper()) if request.auction else None,
+                fee_type=request.fee_type.upper() if request.fee_type else None,
+                location=request.location,
+                vehicle_type=VehicleTypeEnum(request.vehicle_type) if request.vehicle_type else VehicleTypeEnum.CAR,
+                destination=request.destination if request.destination else None,
         )
-        return params
 
     async def GetCalculatorWithData(self, request: calculator_pb2.GetCalculatorWithDataRequest, context)-> calculator_pb2.GetCalculatorWithDataResponse:
         logger.info(
@@ -320,13 +275,9 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             )
 
             params = self.get_params_from_request(request)
-
             logger.info("Parameters validated successfully for GetCalculatorWithData: %s", params)
-            return await self._calculate_and_respond(
-                params,
-                context,
-                GetCalculatorWithDataResponse,
-            )
+            calculator, detailed_data = self._calculate(params)
+            return GetCalculatorWithDataResponse(data=calculator, detailed_data=detailed_data)
 
         except ValueError as e:
             logger.warning("Validation error in GetCalculatorWithData: %s", e)
@@ -365,8 +316,8 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 logger.warning("Vehicle type not provided in request")
                 raise ValueError("vehicle_type is required")
 
-            auction_enum = self._safe_enum_conversion(request.auction.upper(), AuctionEnum, "auction")
-            vehicle_type_enum = self._safe_enum_conversion(request.vehicle_type, VehicleTypeEnum, "vehicle_type")
+            auction_enum = AuctionEnum(request.auction.upper()) if request.auction else None
+            vehicle_type_enum = VehicleTypeEnum(request.vehicle_type) if request.vehicle_type else VehicleTypeEnum.CAR
 
             location_message = None
             destination_name = ""
