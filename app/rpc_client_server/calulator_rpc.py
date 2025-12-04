@@ -1,5 +1,5 @@
 import time
-from typing import TYPE_CHECKING, Any, Coroutine
+from typing import TYPE_CHECKING
 
 import grpc
 from pydantic import BaseModel
@@ -29,7 +29,7 @@ from app.rpc_client_server.gen.python.calculator.v1.calculator_pb2 import (
     VATs,
     GetCalculatorWithoutDataResponse,
     GetCalculatorWithDataBatchResponse,
-    CalculatorBatchItem, CalculatorOut, DetailedCalculatorData,
+    CalculatorBatchItem, DetailedCalculatorData,
 )
 from app.services.calculator.calculator_service import CalculatorService
 from app.services.calculator.types import CalculatorOut
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 class CalculatorRequest(BaseModel):
     price: int
-    auction: AuctionEnum
+    auction: AuctionEnum | None
     fee_type: FeeTypeEnum | None
     location: str
     vehicle_type: VehicleTypeEnum
@@ -49,6 +49,20 @@ class CalculatorRequest(BaseModel):
 
 
 class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
+
+    @staticmethod
+    def _safe_enum_conversion(value, enum_cls, field_name: str):
+        if value in (None, ""):
+            return None
+        candidates = [value]
+        if isinstance(value, str):
+            candidates.extend([value.upper(), value.lower()])
+        for candidate in candidates:
+            try:
+                return enum_cls(candidate)
+            except ValueError:
+                continue
+        raise ValueError(f"Invalid {field_name}: {value}")
 
     @staticmethod
     def transform_to_proto(data, proto_class):
@@ -66,10 +80,10 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             raise ValueError(f"Invalid data format for {proto_class.__name__}")
 
     def _create_calculator_out(self, calc: CalculatorOut) -> CalculatorOutProto:
-        logger.debug("Creating CalculatorOut from calculation result")
+        logger.debug(f"Creating CalculatorOut from calculation result")
         try:
             c = calc.calculator
-            logger.debug("Processing calculator with broker_fee: %s", c.broker_fee)
+            logger.debug(f"Processing calculator with broker_fee: {c.broker_fee}")
 
             transport = self.transform_to_proto(c.transportation_price, City)
             ocean = self.transform_to_proto(c.ocean_ship, City)
@@ -84,7 +98,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 internet_fee=c.additional.internet_fee if c.additional else 0,
                 live_fee=c.additional.live_fee if c.additional else 0,
             )
-            logger.debug("Created additional fees with summ: %s", additional.summ)
+            logger.debug(f"Created additional fees with summ: {additional.summ}")
 
             base = dict(
                 broker_fee=c.broker_fee or 0,
@@ -94,7 +108,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             )
 
             eu_calculator_exists = calc.eu_calculator is not None
-            logger.debug("EU calculator exists: %s", eu_calculator_exists)
+            logger.debug(f"EU calculator exists: {eu_calculator_exists}")
 
             result = CalculatorOutProto(
                 calculator=DefaultCalculator(
@@ -125,10 +139,10 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                     custom_agency=calc.eu_calculator.custom_agency if calc.eu_calculator else 0,
                 ),
             )
-            logger.info("Successfully created CalculatorOut")
+            logger.info(f"Successfully created CalculatorOut")
             return result
         except Exception as e:
-            logger.error("Error creating CalculatorOut: %s", e, exc_info=True)
+            logger.error(f"Error creating CalculatorOut: {e}", exc_info=True)
             raise
 
     async def _build_detailed_data(self, db, params: CalculatorRequest) -> DetailedCalculatorData | None:
@@ -141,21 +155,21 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             shipping_price_service = ShippingPriceService(db)
 
             vehicle_type_obj = await vehicle_type_service.get_by_auction_and_type(
-                params["auction"],
-                params["vehicle_type"],
+                params.auction,
+                params.vehicle_type,
             )
             if not vehicle_type_obj:
-                logger.warning("Vehicle type not found while building detailed data")
+                logger.warning(f"Vehicle type not found while building detailed data")
                 return None
 
-            location_obj = await location_service.find_location(params["location"], vehicle_type_obj)
+            location_obj = await location_service.find_location(params.location, vehicle_type_obj)
             if not location_obj:
-                logger.warning("Location not found while building detailed data: %s", params["location"])
+                logger.warning(f"Location not found while building detailed data: {params.location}")
                 return None
 
             fee_type_obj = None
-            if params.get("fee_type"):
-                fee_type_obj = await fee_type_service.get_by_fee_auction(params["auction"], params["fee_type"])
+            if params.fee_type:
+                fee_type_obj = await fee_type_service.get_by_fee_auction(params.auction, params.fee_type)
 
             delivery_prices = await delivery_price_service.get_by_terminal_location_vehicle_type(
                 location=location_obj,
@@ -211,22 +225,47 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             return calculator_pb2.DetailedCalculatorData(**detailed_kwargs)
 
         except Exception as e:
-            logger.error("Failed to build detailed calculator data: %s", e, exc_info=True)
+            logger.error(f"Failed to build detailed calculator data: {e}", exc_info=True)
             return None
 
-    async def _calculate(self, params: CalculatorRequest)-> tuple[CalculatorOut, DetailedCalculatorData | None]:
+    async def _calculate(self, request: CalculatorRequest) -> tuple[CalculatorOut, DetailedCalculatorData | None]:
         async with get_db_context() as db:
-            logger.debug("Database connection established")
-            calculator_service = CalculatorService(db=db, **params.model_dump())
-            logger.debug("CalculatorService instance created")
+            logger.debug(f"Database connection established")
+            calculator_service = CalculatorService(db=db, **request.model_dump())
+            logger.debug(f"CalculatorService instance created")
             result = await calculator_service.calculate()
-            logger.info("Calculation completed successfully")
+            logger.info(f"Calculation completed successfully")
 
             calculator_out = self._create_calculator_out(result.calculator_in_dollars)
-            logger.debug("CalculatorOut created successfully")
-            detailed_data = await self._build_detailed_data(db, params)
-            logger.debug("Detailed calculator data prepared")
+            logger.debug(f"CalculatorOut created successfully")
+            detailed_data = await self._build_detailed_data(db, request)
+            logger.debug(f"Detailed calculator data prepared")
             return calculator_out, detailed_data
+
+    async def _calculate_and_respond(self, request: CalculatorRequest, context, response_cls):
+        try:
+            calculator_out, detailed_data = await self._calculate(request)
+            return response_cls(
+                data=calculator_out,
+                detailed_data=detailed_data,
+                success=True,
+            )
+        except ValueError as e:
+            logger.warning(f"Validation error in calculation: {e}")
+            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+            context.set_details(str(e))
+            return response_cls(
+                message=str(e),
+                success=False,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error during calculation: {e}", exc_info=True)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details("Internal server error")
+            return response_cls(
+                message="Internal server error",
+                success=False,
+            )
 
 
     @staticmethod
@@ -236,51 +275,46 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             return entity
 
         message = f"{entity_name} {obj_id} not found"
-        logger.warning(message)
+        logger.warning(f"{message}")
         context.set_code(grpc.StatusCode.NOT_FOUND)
         context.set_details(message)
         return None
 
-    def get_params_from_request(self, request: calculator_pb2.GetCalculatorWithDataRequest)-> CalculatorRequest:
+    def get_params_from_request(self, request: calculator_pb2.GetCalculatorWithDataRequest) -> CalculatorRequest:
         return CalculatorRequest(
-                price=request.price,
-                auction=AuctionEnum(request.auction.upper()) if request.auction else None,
-                fee_type=request.fee_type.upper() if request.fee_type else None,
-                location=request.location,
-                vehicle_type=VehicleTypeEnum(request.vehicle_type) if request.vehicle_type else VehicleTypeEnum.CAR,
-                destination=request.destination if request.destination else None,
+            price=request.price,
+            auction=self._safe_enum_conversion(request.auction, AuctionEnum, "auction"),
+            fee_type=self._safe_enum_conversion(request.fee_type, FeeTypeEnum, "fee_type"),
+            location=request.location,
+            vehicle_type=self._safe_enum_conversion(request.vehicle_type, VehicleTypeEnum, "vehicle_type")
+            or VehicleTypeEnum.CAR,
+            destination=request.destination if request.destination else None,
         )
 
     async def GetCalculatorWithData(self, request: calculator_pb2.GetCalculatorWithDataRequest, context)-> calculator_pb2.GetCalculatorWithDataResponse:
         logger.info(
-            "GetCalculatorWithData called with price: %s, auction: %s, location: %s",
-            request.price,
-            request.auction,
-            request.location,
+            f"GetCalculatorWithData called with price: {request.price}, auction: {request.auction}, location: {request.location}"
         )
         try:
             if request.price < -1:
-                logger.warning("Invalid price provided: %s", request.price)
+                logger.warning(f"Invalid price provided: {request.price}")
                 raise ValueError("Price must be greater than -1")
 
             if not request.location:
-                logger.warning("Location not provided in request")
+                logger.warning(f"Location not provided in request")
                 raise ValueError("Location is required")
 
             logger.debug(
-                "Validating request parameters: auction=%s, fee_type=%s, vehicle_type=%s",
-                request.auction,
-                request.fee_type,
-                request.vehicle_type,
+                f"Validating request parameters: auction={request.auction}, fee_type={request.fee_type}, vehicle_type={request.vehicle_type}"
             )
 
             params = self.get_params_from_request(request)
-            logger.info("Parameters validated successfully for GetCalculatorWithData: %s", params)
-            calculator, detailed_data = self._calculate(params)
-            return GetCalculatorWithDataResponse(data=calculator, detailed_data=detailed_data)
+            logger.info(f"Parameters validated successfully for GetCalculatorWithData: {params}")
+            calculator, detailed_data = await self._calculate(params)
+            return GetCalculatorWithDataResponse(data=calculator, detailed_data=detailed_data, success=True)
 
         except ValueError as e:
-            logger.warning("Validation error in GetCalculatorWithData: %s", e)
+            logger.warning(f"Validation error in GetCalculatorWithData: {e}")
             context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
             context.set_details(str(e))
             return GetCalculatorWithDataResponse(
@@ -288,7 +322,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 success=False,
             )
         except Exception as e:
-            logger.error("Unexpected error in GetCalculatorWithData: %s", e, exc_info=True)
+            logger.error(f"Unexpected error in GetCalculatorWithData: {e}", exc_info=True)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details("Internal server error")
             return GetCalculatorWithDataResponse(
@@ -298,26 +332,26 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
 
     async def GetCalculatorWithIds(self, request: calculator_pb2.GetCalculatorWithIdsRequest, context)-> calculator_pb2.GetCalculatorWithIdsResponse:
         logger.info(
-            "GetCalculatorWithIds called with price: %s, auction: %s, location_id: %s",
-            request.price,
-            request.auction,
-            request.location_id,
+            f"GetCalculatorWithIds called with price: {request.price}, auction: {request.auction}, location_id: {request.location_id}"
         )
         try:
             if request.price < -1:
-                logger.warning("Invalid price provided: %s", request.price)
+                logger.warning(f"Invalid price provided: {request.price}")
                 raise ValueError("Price must be greater than -1")
 
             if not request.HasField("location_id") or request.location_id <= 0:
-                logger.warning("Location ID not provided in request")
+                logger.warning(f"Location ID not provided in request")
                 raise ValueError("location_id is required")
 
             if not request.vehicle_type:
-                logger.warning("Vehicle type not provided in request")
+                logger.warning(f"Vehicle type not provided in request")
                 raise ValueError("vehicle_type is required")
 
-            auction_enum = AuctionEnum(request.auction.upper()) if request.auction else None
-            vehicle_type_enum = VehicleTypeEnum(request.vehicle_type) if request.vehicle_type else VehicleTypeEnum.CAR
+            auction_enum = self._safe_enum_conversion(request.auction, AuctionEnum, "auction")
+            vehicle_type_enum = (
+                self._safe_enum_conversion(request.vehicle_type, VehicleTypeEnum, "vehicle_type")
+                or VehicleTypeEnum.CAR
+            )
 
             location_message = None
             destination_name = ""
@@ -363,7 +397,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                     else:
                         destination = await destination_service.get_default()
                         if not destination:
-                            logger.error("Default destination not found")
+                            logger.error(f"Default destination not found")
                             context.set_code(grpc.StatusCode.NOT_FOUND)
                             context.set_details("Default destination not found")
                             return calculator_pb2.GetCalculatorWithIdsResponse()
@@ -393,7 +427,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                     )
                     if not vehicle_type_model:
                         message = "Vehicle type not found"
-                        logger.warning(message)
+                        logger.warning(f"{message}")
                         context.set_code(grpc.StatusCode.NOT_FOUND)
                         context.set_details(message)
                         return calculator_pb2.GetCalculatorWithIdsResponse()
@@ -406,12 +440,12 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                     if delivery_prices:
                         terminal_name = delivery_prices[0].terminal.name or ""
             except Exception as e:
-                logger.error("Error preparing data for GetCalculatorWithIds: %s", e, exc_info=True)
+                logger.error(f"Error preparing data for GetCalculatorWithIds: {e}", exc_info=True)
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details("Failed to prepare calculator data")
                 return calculator_pb2.GetCalculatorWithIdsResponse()
 
-            params = dict(
+            calc_request = CalculatorRequest(
                 price=request.price,
                 auction=auction_enum,
                 fee_type=fee_type_enum_value,
@@ -420,7 +454,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 destination=destination_value,
             )
 
-            calculator_out, _, error_message = await self._calculate(params, context)
+            calculator_out, detailed_data = await self._calculate(calc_request)
             if calculator_out is None:
                 return calculator_pb2.GetCalculatorWithIdsResponse()
 
@@ -429,6 +463,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 location=location_message,
                 terminal_name=terminal_name,
                 destination_name=destination_name,
+                detailed_data=detailed_data,
             )
 
             if fee_type_message:
@@ -437,18 +472,18 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             return calculator_pb2.GetCalculatorWithIdsResponse(**response_kwargs)
 
         except ValueError as e:
-            logger.warning("Validation error in GetCalculatorWithIds: %s", e)
+            logger.warning(f"Validation error in GetCalculatorWithIds: {e}")
             context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
             context.set_details(str(e))
             return calculator_pb2.GetCalculatorWithIdsResponse()
         except Exception as e:
-            logger.error("Unexpected error in GetCalculatorWithIds: %s", e, exc_info=True)
+            logger.error(f"Unexpected error in GetCalculatorWithIds: {e}", exc_info=True)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details("Internal server error")
             return calculator_pb2.GetCalculatorWithIdsResponse()
 
     async def GetCalculatorWithDataBatch(self, request, context):
-        logger.info("GetCalculatorWithDataBatch called with %s requests", len(request.data))
+        logger.info(f"GetCalculatorWithDataBatch called with {len(request.data)} requests")
 
         start = time.time()
         try:
@@ -465,14 +500,10 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 )
 
                 item_time = time.time() - item_start
-                logger.info("Item %s (lot_id=%s) took %.3fs", i, req_item.lot_id, item_time)
+                logger.info(f"Item {i} (lot_id={req_item.lot_id}) took {item_time:.3f}s")
 
                 if context.code() != grpc.StatusCode.OK:
-                    logger.error(
-                        "Error in batch item with lot_id %s: %s",
-                        req_item.lot_id,
-                        context.details(),
-                    )
+                    logger.error(f"Error in batch item with lot_id {req_item.lot_id}: {context.details()}")
                     context.set_code(grpc.StatusCode.OK)
                     context.set_details("")
                     continue
@@ -480,43 +511,40 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 responses.append(CalculatorBatchItem(calculator=response.data, lot_id=req_item.lot_id))
 
             total_time = time.time() - start
-            logger.info("Total batch time: %.3fs", total_time)
+            logger.info(f"Total batch time: {total_time:.3f}s")
 
             return GetCalculatorWithDataBatchResponse(data=responses)
 
         except Exception as e:
-            logger.error("Unexpected error: %s", e, exc_info=True)
+            logger.error(f"Unexpected error: {e}", exc_info=True)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details("Internal server error")
             return GetCalculatorWithDataBatchResponse()
 
     async def GetCalculatorWithoutData(self, request, context)-> calculator_pb2.GetCalculatorWithoutDataResponse:
         logger.info(
-            "GetCalculatorWithoutData called with price: %s, lot_id: %s, auction: %s",
-            request.price,
-            request.lot_id,
-            request.auction,
+            f"GetCalculatorWithoutData called with price: {request.price}, lot_id: {request.lot_id}, auction: {request.auction}"
         )
         try:
             if request.price <= 0:
-                logger.warning("Invalid price provided: %s", request.price)
+                logger.warning(f"Invalid price provided: {request.price}")
                 raise ValueError("Price must be greater than 0")
 
             if not request.lot_id:
-                logger.warning("Lot ID not provided in request")
+                logger.warning(f"Lot ID not provided in request")
                 raise ValueError("Lot ID is required")
 
             auction_enum = self._safe_enum_conversion(request.auction, AuctionEnum, "auction")
-            logger.debug("Auction enum converted: %s", auction_enum)
+            logger.debug(f"Auction enum converted: {auction_enum}")
 
             lot = None
             try:
-                logger.info("Fetching lot data for lot_id: %s, auction: %s", request.lot_id, request.auction)
+                logger.info(f"Fetching lot data for lot_id: {request.lot_id}, auction: {request.auction}")
                 async with ApiRpcClient() as client:
                     lot = await client.get_lot_by_vin_or_lot_id(request.lot_id, request.auction)
-                logger.info("Successfully fetched lot data for lot_id: %s", request.lot_id)
+                logger.info(f"Successfully fetched lot data for lot_id: {request.lot_id}")
             except grpc.aio.AioRpcError as e:
-                logger.error("RPC error when fetching lot data: %s: %s", e.code(), e.details())
+                logger.error(f"RPC error when fetching lot data: {e.code()}: {e.details()}")
                 if e.code() == grpc.StatusCode.NOT_FOUND:
                     context.set_code(grpc.StatusCode.NOT_FOUND)
                     context.set_details(f"Lot {request.lot_id} not found")
@@ -539,7 +567,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                         success=False,
                     )
             except Exception as e:
-                logger.error("Unexpected error when fetching lot data: %s", e, exc_info=True)
+                logger.error(f"Unexpected error when fetching lot data: {e}", exc_info=True)
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details("Failed to fetch lot data")
                 return GetCalculatorWithoutDataResponse(
@@ -548,7 +576,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 )
 
             if not lot or not lot.lot or len(lot.lot) == 0:
-                logger.warning("No lot data found for lot_id: %s", request.lot_id)
+                logger.warning(f"No lot data found for lot_id: {request.lot_id}")
                 context.set_code(grpc.StatusCode.NOT_FOUND)
                 context.set_details(f"No data found for lot {request.lot_id}")
                 return GetCalculatorWithoutDataResponse(
@@ -558,10 +586,10 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
 
             try:
                 lot_item = lot.lot[0]
-                logger.debug("Processing lot item with location: %s", lot_item.location)
+                logger.debug(f"Processing lot item with location: {lot_item.location}")
 
                 if not lot_item.location:
-                    logger.error("Lot location is empty")
+                    logger.error(f"Lot location is empty")
                     raise ValueError("Lot location is empty")
 
                 vehicle_type = VehicleTypeEnum.CAR
@@ -570,18 +598,20 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                         vehicle_type = VehicleTypeEnum.CAR
                     else:
                         vehicle_type = VehicleTypeEnum.MOTO
-                logger.debug("Determined vehicle type: %s", vehicle_type)
+                logger.debug(f"Determined vehicle type: {vehicle_type}")
 
-                params = dict(
+                params = CalculatorRequest(
                     price=request.price,
                     auction=auction_enum,
+                    fee_type=None,
                     location=lot_item.location,
                     vehicle_type=vehicle_type,
+                    destination=None,
                 )
-                logger.info("Parameters prepared for calculation: %s", params)
+                logger.info(f"Parameters prepared for calculation: {params}")
 
             except (IndexError, AttributeError) as e:
-                logger.error("Error parsing lot data: %s", e)
+                logger.error(f"Error parsing lot data: {e}")
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details("Invalid lot data format")
                 return GetCalculatorWithoutDataResponse(
@@ -596,7 +626,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
             )
 
         except ValueError as e:
-            logger.warning("Validation error in GetCalculatorWithoutData: %s", e)
+            logger.warning(f"Validation error in GetCalculatorWithoutData: {e}")
             context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
             context.set_details(str(e))
             return GetCalculatorWithoutDataResponse(
@@ -604,7 +634,7 @@ class CalculatorRpc(calculator_pb2_grpc.CalculatorServiceServicer):
                 success=False,
             )
         except Exception as e:
-            logger.error("Unexpected error in GetCalculatorWithoutData: %s", e, exc_info=True)
+            logger.error(f"Unexpected error in GetCalculatorWithoutData: {e}", exc_info=True)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details("Internal server error")
             return GetCalculatorWithoutDataResponse(
