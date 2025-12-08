@@ -13,7 +13,7 @@ from app.database.crud.location import LocationService
 from app.database.db.session import get_async_db
 from app.enums.auction import AuctionEnum
 from app.enums.vehicle_type import VehicleTypeEnum
-from app.rpc_client.auction_api import ApiRpcClient
+from app.rpc_client_server.auction_api import ApiRpcClient
 from app.schemas.calculator import CalculatorDataIn, CalculatorWithoutDetailsIn, LocationPage, GetLocationsIn
 from app.services.calculator.calculator_service import CalculatorService
 from app.services.calculator.exceptions import NotFoundError
@@ -90,5 +90,4 @@ async def get_locations(db: AsyncSession = Depends(get_async_db), params: Params
     location_service = LocationService(db)
     locations_stmt =  await location_service.get_with_search_auction(search=data.search, auction=data.auction, get_stmt=True)
     return await paginate(db, locations_stmt, params)
-
 
