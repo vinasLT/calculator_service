@@ -4,9 +4,10 @@ from sqlalchemy import select, or_, and_, Row, RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.base import BaseService
-from app.database.models import Location, VehicleType, ShippingPrice, Destination, Terminal
+from app.database.models import Location, VehicleType, ShippingPrice, Destination, Terminal, DeliveryPrice
 
 from app.database.schemas.shipping_price import ShippingPriceCreate, ShippingPriceUpdate
+from app.enums.auction import AuctionEnum
 
 
 class ShippingPriceService(BaseService[ShippingPrice, ShippingPriceCreate, ShippingPriceUpdate]):
@@ -64,6 +65,39 @@ class ShippingPriceService(BaseService[ShippingPrice, ShippingPriceCreate, Shipp
         )
         return result.scalar_one_or_none()
 
+    async def get_available_destinations(
+        self,
+        location_id: int,
+        terminal_id: int,
+        auction: AuctionEnum | None = None,
+        get_stmt: bool = False,
+    ):
+        stmt = (
+            select(Destination)
+            .join(ShippingPrice, ShippingPrice.destination_id == Destination.id)
+            .join(
+                DeliveryPrice,
+                and_(
+                    DeliveryPrice.vehicle_type_id == ShippingPrice.vehicle_type_id,
+                    DeliveryPrice.location_id == location_id,
+                    DeliveryPrice.terminal_id == terminal_id,
+                ),
+            )
+            .where(ShippingPrice.terminal_id == terminal_id)
+            .distinct()
+        )
+
+        if auction:
+            stmt = (
+                stmt.join(VehicleType, ShippingPrice.vehicle_type_id == VehicleType.id)
+                .where(VehicleType.auction == auction)
+            )
+
+        if get_stmt:
+            return stmt
+
+        result = await self.session.execute(stmt)
+        return result.scalars().unique().all()
 
 
 

@@ -1,10 +1,9 @@
 from pydantic import BaseModel, Field
 
-from app.core.utils import create_pagination_page
-from app.database.schemas.location import LocationRead
 from app.enums.auction import AuctionEnum
 from app.enums.fee_type import FeeTypeEnum
 from app.enums.vehicle_type import VehicleTypeEnum
+from app.schemas.location import GetLocationsIn, LocationPage
 
 
 class CalculatorDataIn(BaseModel):
@@ -18,11 +17,3 @@ class CalculatorDataIn(BaseModel):
 class CalculatorWithoutDetailsIn(BaseModel):
     price: int = Field(..., gt=0, description="Price for vehicle")
     destination: str | None = Field(None, description="Destination (Port in Europe)")
-
-
-class GetLocationsIn(BaseModel):
-    search: str | None = Field(None, description="Search by location name")
-    auction: AuctionEnum | None = Field(None, description="Auction")
-
-LocationPage = create_pagination_page(LocationRead)
-

@@ -1,3 +1,5 @@
+from typing import Any, Sequence
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,5 +25,10 @@ class FeeTypeService(BaseService[FeeType, FeeTypeCreate, FeeTypeUpdate]):
         )
         return result.scalar_one_or_none()
 
-
+    async def list_fee_types(self, auction: AuctionEnum | None = None) -> Sequence[FeeType]:
+        stmt = select(FeeType)
+        if auction:
+            stmt = stmt.where(FeeType.auction == auction)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
 

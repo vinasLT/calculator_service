@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.crud.base import BaseService
 from app.database.models import DeliveryPrice, Terminal, Location, VehicleType
 from app.database.schemas.delivery_price import DeliveryPriceUpdate, DeliveryPriceCreate
+from app.enums.auction import AuctionEnum
 
 
 class DeliveryPriceService(BaseService[DeliveryPrice, DeliveryPriceCreate, DeliveryPriceUpdate]):
@@ -38,4 +39,28 @@ class DeliveryPriceService(BaseService[DeliveryPrice, DeliveryPriceCreate, Deliv
         )
         return result.scalars().all()
 
+    async def get_available_terminals(
+        self,
+        location_id: int,
+        auction: AuctionEnum | None = None,
+        get_stmt: bool = False,
+    ):
+        stmt = (
+            select(Terminal)
+            .join(DeliveryPrice, DeliveryPrice.terminal_id == Terminal.id)
+            .where(DeliveryPrice.location_id == location_id)
+            .distinct()
+        )
+
+        if auction:
+            stmt = (
+                stmt.join(VehicleType, DeliveryPrice.vehicle_type_id == VehicleType.id)
+                .where(VehicleType.auction == auction)
+            )
+
+        if get_stmt:
+            return stmt
+
+        result = await self.session.execute(stmt)
+        return result.scalars().unique().all()
 
