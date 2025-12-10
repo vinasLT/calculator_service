@@ -343,7 +343,7 @@ if __name__ == "__main__":
         auction = AuctionEnum.IAAI
         vehicle_type = VehicleTypeEnum.CAR
 
-        calculator = CalculatorService(db, user_price,auction, None, location, vehicle_type)
+        calculator = CalculatorService(db, user_price,auction, location, vehicle_type)
         data = await calculator.calculate()
 
         def print_data(calculator):

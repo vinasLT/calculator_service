@@ -9,8 +9,12 @@ class ExchangeRate(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     rate: Mapped[float] = mapped_column(nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False, default=datetime.now(UTC))
-
+    # Use a callable so each row gets its own timestamp instead of sharing one value from import time
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
 
 
 
