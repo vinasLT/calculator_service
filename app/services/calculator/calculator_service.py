@@ -114,9 +114,13 @@ class CalculatorService:
                 SpecialFee(name=special_fee.name, price=usd_to_euro(special_fee.price))
                 for special_fee in additional_fees.fees
             ]
-            return AdditionalFeesOut(summ=additional_fees.summ, fees=special_fees,
-                                     auction_fee=additional_fees.auction_fee, internet_fee=additional_fees.internet_fee,
-                                     live_fee=additional_fees.live_fee)
+            return AdditionalFeesOut(
+                summ=usd_to_euro(additional_fees.summ),
+                fees=special_fees,
+                auction_fee=usd_to_euro(additional_fees.auction_fee),
+                internet_fee=usd_to_euro(additional_fees.internet_fee),
+                live_fee=usd_to_euro(additional_fees.live_fee)
+            )
 
 
         default_calculator = DefaultCalculator(
@@ -368,7 +372,6 @@ if __name__ == "__main__":
 
 
     asyncio.run(main())
-
 
 
 
