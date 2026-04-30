@@ -24,7 +24,7 @@ from app.services.calculator.types import City, DefaultCalculator, AdditionalFee
 
 
 class CalculatorService:
-    BROKER_FEE = 250
+    BROKER_FEE = 350
 
     def __init__(self,
                  db: AsyncSession,
