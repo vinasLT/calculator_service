@@ -13,7 +13,9 @@ class CalculatorDataIn(BaseModel):
     vehicle_type: VehicleTypeEnum = Field(...,description="Vehicle type")
     destination: str | None = Field(None, description="Destination (Port in Europe)")
     location: str = Field(..., description="Location")
+    is_us_vehicle: bool = Field(default=False, description="If true, VAT/tax is excluded from EU calculations")
 
 class CalculatorWithoutDetailsIn(BaseModel):
     price: int = Field(..., gt=0, description="Price for vehicle")
     destination: str | None = Field(None, description="Destination (Port in Europe)")
+    is_us_vehicle: bool = Field(default=False, description="If true, VAT/tax is excluded from EU calculations")

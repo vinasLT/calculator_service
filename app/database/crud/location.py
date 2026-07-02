@@ -1,6 +1,6 @@
 import re
 
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.base import BaseService, CreateSchemaType, ModelType

@@ -33,13 +33,15 @@ class CalculatorService:
                  location: str,
                  vehicle_type: VehicleTypeEnum,
                  fee_type: FeeTypeEnum | None = None,
-                 destination: str | None = None):
+                 destination: str | None = None,
+                 is_us_vehicle: bool = False):
         self.data = CalculatorDataIn(price=price,
                                      auction=auction,
                                      fee_type=fee_type,
                                      location=location,
                                      vehicle_type=vehicle_type,
-                                     destination=destination)
+                                     destination=destination,
+                                     is_us_vehicle=is_us_vehicle)
         self.db = db
     @log_async_execution_time('Additional Fees Calculation')
     async def additional_fees_calculator(self) -> AdditionalFeesOut:
@@ -294,10 +296,16 @@ class CalculatorService:
                     self.data.price
             )
 
-            eu_vat = round(base_sum * 0.1)
-            eu_vats_list.append(City(name=delivery.name, price=eu_vat))
+            
+
+            if self.data.is_us_vehicle:
+                eu_vat = 0
+            else:
+                eu_vat = round(base_sum * 0.1)
 
             vat = round((eu_vat + base_sum) * 0.21)
+                
+            eu_vats_list.append(City(name=delivery.name, price=eu_vat))
             vats_list.append(City(name=delivery.name, price=vat))
 
             total_price_eu = round(
