@@ -1,6 +1,6 @@
 import re
 
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.base import BaseService, CreateSchemaType, ModelType
@@ -22,8 +22,20 @@ class LocationService(BaseService[Location, LocationCreate, LocationUpdate]):
         clean_name = re.sub(r'\s*\([^)]*\)', '', location_name).strip()
         texted_location = f"{city} {state}" if city and state else ""
 
+        # IAAI/Copart often send "City Yard (ST)"; DB may have "City" or "City Yard" only.
+        state_from_paren: str | None = None
+        m_state = re.search(r'\(\s*([A-Za-z]{2})\s*\)\s*\Z', location_name.strip())
+        if m_state:
+            state_from_paren = m_state.group(1).upper()
+        name_no_direction = re.sub(
+            r'\s+(West|East|North|South)\s*\Z', '', clean_name, flags=re.IGNORECASE
+        ).strip()
+        primary_token = clean_name.split()[0] if clean_name else None
+
         async def search_by_conditions(conditions: list) -> Location | None:
             for condition in conditions:
+                if condition is None:
+                    continue
                 try:
                     result = await self.session.execute(
                         select(Location)
@@ -39,12 +51,40 @@ class LocationService(BaseService[Location, LocationCreate, LocationUpdate]):
                     continue
             return None
 
-        search_conditions = []
+        search_conditions: list = []
 
         if location_name:
             search_conditions.extend([
                 Location.name.ilike(location_name),
                 Location.name.ilike(clean_name),
+            ])
+        if name_no_direction and name_no_direction != clean_name:
+            search_conditions.append(Location.name.ilike(name_no_direction))
+        if state_from_paren and clean_name:
+            search_conditions.append(
+                and_(
+                    Location.state.ilike(state_from_paren),
+                    Location.name.ilike(f'%{clean_name}%'),
+                )
+            )
+            if name_no_direction and name_no_direction != clean_name:
+                search_conditions.append(
+                    and_(
+                        Location.state.ilike(state_from_paren),
+                        Location.name.ilike(f'%{name_no_direction}%'),
+                    )
+                )
+        if state_from_paren and primary_token and len(clean_name.split()) > 1:
+            # e.g. "Sacramento West" -> try "Sacramento%" + state
+            search_conditions.extend([
+                and_(
+                    Location.state.ilike(state_from_paren),
+                    Location.name.ilike(f'{primary_token}%'),
+                ),
+                and_(
+                    Location.state.ilike(state_from_paren),
+                    Location.city.ilike(f'{primary_token}%'),
+                ),
             ])
 
         if city and state:

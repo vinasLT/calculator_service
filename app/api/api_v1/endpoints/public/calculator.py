@@ -33,7 +33,8 @@ async def get_calculator(data: CalculatorDataIn = Body(...), db: AsyncSession = 
             fee_type=data.fee_type,
             location=data.location,
             vehicle_type=data.vehicle_type,
-            destination=data.destination
+            destination=data.destination,
+            is_us_vehicle=data.is_us_vehicle,
         )
 
         return await calculator_service.calculate()
@@ -65,7 +66,9 @@ async def get_calculator_by_lot(
             auction=auction,
             fee_type=None,
             location=lot.lot[0].location,
-            vehicle_type=VehicleTypeEnum.CAR if lot.lot[0].vehicle_type == 'Automobile' else VehicleTypeEnum.MOTO
+            vehicle_type=VehicleTypeEnum.CAR if lot.lot[0].vehicle_type == 'Automobile' else VehicleTypeEnum.MOTO,
+            destination=price.destination,
+            is_us_vehicle=price.is_us_vehicle,
         )
         return await calculator_service.calculate()
     except grpc.aio.AioRpcError as e:
