@@ -25,7 +25,7 @@ from app.services.calculator.types import City, DefaultCalculator, AdditionalFee
 
 class CalculatorService:
     BROKER_FEE = 250
-    # Flat broker fee added on top of the tiered auction (buyer) fee.
+    # Flat broker fee added on top of Copart's tiered auction (buyer) fee.
     AUCTION_BROKER_FEE = 50
 
     def __init__(self,
@@ -79,7 +79,9 @@ class CalculatorService:
         else:
             auction_fee = auction_fee_obj.car_price_fee
 
-        auction_fee = normalize_fee(auction_fee) + self.AUCTION_BROKER_FEE
+        auction_fee = normalize_fee(auction_fee)
+        if self.data.auction == AuctionEnum.COPART:
+            auction_fee += self.AUCTION_BROKER_FEE
 
         if self.data.auction == AuctionEnum.IAAI:
             internet_fee = await additional_fee_service.get_price_in_int_proxy(self.data.price)
