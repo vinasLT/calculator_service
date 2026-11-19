@@ -8,5 +8,8 @@ done
 echo "📦 Applying migrations"
 alembic upgrade head
 
+echo "🌱 Seeding fees"
+python scripts/init_db.py
+
 echo "🚀 Start App"
 exec "$@"
