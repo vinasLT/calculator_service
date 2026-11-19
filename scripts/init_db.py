@@ -13,6 +13,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.core.logger import logger
 from app.database.db.session import engine
 
+# Shared by every container that starts this service, so two seeds cannot insert at once.
+SEED_LOCK_ID = 741852963
+
 
 def _coerce_bool_series(series: pd.Series) -> pd.Series:
     """Coerce a pandas Series with values like 0/1, "0"/"1", "true"/"false" to booleans."""
@@ -83,23 +86,30 @@ async def seed_fees(engine: Engine):
         'shipping_price',
     ]
 
-    # Phase 1: delete existing data without dropping tables (preserve schema & FKs)
-    with engine.begin() as conn:
-        for table in delete_order:
-            logger.info(f'Clearing table {table}')
-            try:
-                conn.execute(text(f'DELETE FROM "{table}"'))
-            except Exception as e:
-                logger.warning(f'Failed to delete from {table}: {e}')
+    # One session holds the lock for the whole reseed. Other containers wait.
+    with engine.connect() as lock_conn:
+        if lock_conn.dialect.name == 'postgresql':
+            lock_conn.execute(text('SELECT pg_advisory_lock(:key)'), {'key': SEED_LOCK_ID})
+            lock_conn.commit()
+        try:
+            # Phase 1: delete existing data without dropping tables (preserve schema & FKs)
+            with engine.begin() as conn:
+                for table in delete_order:
+                    logger.info(f'Clearing table {table}')
+                    conn.execute(text(f'DELETE FROM "{table}"'))
 
-    # Phase 2: insert data
-    for table in insert_order:
-        path = tables[table]
-        logger.info(f'Seeding table {table} from {path}')
-        df = pd.read_csv(path)
-        if table == 'destination' and 'is_default' in df.columns:
-            df['is_default'] = _coerce_bool_series(df['is_default'])
-        df.to_sql(table, engine, if_exists='append', index=False)
+            # Phase 2: insert data
+            for table in insert_order:
+                path = tables[table]
+                logger.info(f'Seeding table {table} from {path}')
+                df = pd.read_csv(path)
+                if table == 'destination' and 'is_default' in df.columns:
+                    df['is_default'] = _coerce_bool_series(df['is_default'])
+                df.to_sql(table, engine, if_exists='append', index=False)
+        finally:
+            if lock_conn.dialect.name == 'postgresql':
+                lock_conn.execute(text('SELECT pg_advisory_unlock(:key)'), {'key': SEED_LOCK_ID})
+                lock_conn.commit()
 
 
 if __name__ == '__main__':
